@@ -1,0 +1,33 @@
+"""FastMCP server — exposes this service's curated tools over MCP.
+
+Mounted at /mcp by app.main when the service is generated with include_mcp.
+Add tools with the @mcp.tool decorator; keep them small and well-described so
+MCP clients (and the models driving them) can use them without guesswork.
+"""
+
+from __future__ import annotations
+
+from fastmcp import FastMCP
+
+mcp = FastMCP("{{ project_name }}")
+
+
+@mcp.tool
+def ping() -> str:
+    """Liveness probe — returns "pong" so a client can confirm the MCP server is up."""
+    return "pong"
+
+
+@mcp.tool
+def lookup(query: str) -> str:
+    """Look up information for ``query`` and return a concise answer.
+
+    This is a curated stub: wire it to your real retrieval/domain logic (a DB
+    query, a RAG pipeline, an upstream API). It returns a placeholder until then.
+    """
+    return f"TODO: implement lookup for {query!r}"
+
+
+# ASGI sub-application. app.main mounts this at /mcp and runs mcp_app.lifespan
+# alongside the service lifespan (FastMCP's streamable-http transport needs it).
+mcp_app = mcp.http_app(path="/mcp")

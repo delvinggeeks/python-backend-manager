@@ -100,6 +100,11 @@ include_observability:
   help: Include Sentry + Logfire + OpenTelemetry?
   default: false
 
+include_mcp:
+  type: bool
+  help: Mount a FastMCP server at /mcp (expose curated tools over MCP)?
+  default: false
+
 automerge_safe_updates:
   type: bool
   help: Let Renovate auto-merge patch & dev-dep updates after CI passes?
@@ -118,5 +123,6 @@ sync_extras:
     {% if include_worker %}{% set _ = parts.append('worker') %}{% endif %}
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
+    {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

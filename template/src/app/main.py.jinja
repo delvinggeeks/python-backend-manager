@@ -1,6 +1,11 @@
 """FastAPI application factory."""
 
 from __future__ import annotations
+{% if include_mcp %}
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+{% endif %}
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +14,18 @@ from app import __version__
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
+{% if include_mcp %}
+from app.mcp_server import mcp_app
+
+
+@asynccontextmanager
+async def _combined_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Enter BOTH the service lifespan and FastMCP's session-manager lifespan.
+    # FastMCP's streamable-http transport requires its lifespan to run, so we
+    # nest them here instead of replacing app.core.lifespan.
+    async with lifespan(app), mcp_app.lifespan(app):
+        yield
+{% endif %}
 
 
 def create_app() -> FastAPI:
@@ -17,7 +34,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=__version__,
         debug=settings.debug,
-        lifespan=lifespan,
+        lifespan={% if include_mcp %}_combined_lifespan{% else %}lifespan{% endif %},
     )
     app.add_middleware(
         CORSMiddleware,
@@ -27,6 +44,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router)
+{% if include_mcp %}
+    app.mount("/mcp", mcp_app)
+{% endif %}
     return app
 
 
