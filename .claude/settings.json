@@ -17,13 +17,14 @@
       "Bash(git commit:*)",
       "Bash(git tag:*)",
       "Bash(git init:*)",
+      "Bash(git push:*)",
+      "Bash(gh:*)",
       "WebFetch(domain:docs.claude.com)",
       "WebFetch(domain:code.claude.com)",
       "WebFetch(domain:pypi.org)"
     ],
     "ask": [
-      "Bash(git push:*)",
-      "Bash(gh:*)"
+
     ],
     "deny": [
       "Read(./.env)",
