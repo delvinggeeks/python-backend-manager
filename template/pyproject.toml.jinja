@@ -34,7 +34,7 @@ observability = [
     "sentry-sdk[fastapi]>=2.20",
     "logfire>=3.0",
     "opentelemetry-instrumentation-fastapi>=0.50b0",
-    "prometheus-fastapi-instrumentator>=7.0",
+    "prometheus-fastapi-instrumentator>=7",
 ]
 llm = [
     "anthropic>=0.109",
@@ -45,15 +45,15 @@ llm = [
 ]
 
 # SaaS + agentic capability extras — all non-conflicting; opt in per service.
-users = ["fastapi-users[sqlalchemy]>=14.0"]
-payments = ["stripe>=11.0"]
-email = ["fastapi-mail>=1.4"]
-storage = ["boto3>=1.35"]
+users = ["fastapi-users[sqlalchemy]>=14"]
+payments = ["stripe>=11"]
+email = ["fastapi-mail>=1.4", "jinja2>=3.1"]
+storage = ["aioboto3>=14"]
 admin = ["sqladmin>=0.20"]
-ratelimit = ["slowapi>=0.1.9"]
-scheduler = ["apscheduler>=3.10"]
-api = ["fastapi-pagination>=0.12"]
-rag = ["pypdf>=5.0", "langchain-text-splitters>=0.3"]
+ratelimit = ["fastapi-limiter>=0.1.6"]
+scheduler = ["apscheduler>=3.11"]
+api = ["fastapi-pagination>=0.12", "python-slugify>=8"]
+rag = ["pypdf>=5", "qdrant-client>=1.12", "semantic-text-splitter>=0.20"]
 mcp = ["mcp>=1.2", "fastmcp>=2"]
 
 # Agent frameworks — all defined, but mutually exclusive (see [tool.uv]).
@@ -78,8 +78,8 @@ dev = [
     "pre-commit>=4.0",
     "faker>=33.0",
     "polyfactory>=2.18",
-    "respx>=0.22",
-    "testcontainers>=4.9",
+    "respx>=0.21",
+    "testcontainers>=4.8",
 ]
 
 [tool.uv]

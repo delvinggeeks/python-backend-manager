@@ -105,6 +105,25 @@ include_mcp:
   help: Mount a FastMCP server at /mcp (expose curated tools over MCP)?
   default: false
 
+saas_extras:
+  type: str
+  help: >-
+    SaaS + agentic capability extras to install (toggle with space, confirm with enter).
+    Renovate / uv lock keep the selected ones latest-and-Python-compatible.
+  multiselect: true
+  default: []
+  choices:
+    - users
+    - payments
+    - email
+    - storage
+    - admin
+    - ratelimit
+    - scheduler
+    - api
+    - rag
+    - mcp
+
 automerge_safe_updates:
   type: bool
   help: Let Renovate auto-merge patch & dev-dep updates after CI passes?
@@ -124,5 +143,6 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
+    {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}
