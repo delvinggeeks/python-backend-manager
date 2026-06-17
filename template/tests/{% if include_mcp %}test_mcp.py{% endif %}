@@ -1,0 +1,21 @@
+"""MCP capability tests — only generated when include_mcp=true."""
+
+from __future__ import annotations
+
+from starlette.routing import Mount
+
+from app.main import create_app
+
+
+def test_mcp_app_is_mounted():
+    app = create_app()
+    mounted = [r for r in app.routes if isinstance(r, Mount) and r.path == "/mcp"]
+    assert mounted, "the FastMCP ASGI app should be mounted at /mcp"
+
+
+async def test_app_starts_with_combined_lifespan():
+    # Entering the app's lifespan must drive BOTH the service lifespan and the
+    # FastMCP session-manager lifespan cleanly (startup + shutdown).
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        pass
