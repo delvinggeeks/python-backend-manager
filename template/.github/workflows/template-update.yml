@@ -1,0 +1,52 @@
+name: Template update
+
+# LAYER 2 of the pipeline: pull improvements from the upstream template itself
+# (new CI, fixed configs, new defaults) into THIS already-generated project.
+# Runs copier update against the latest template tag and opens a PR.
+on:
+  schedule:
+    - cron: "0 7 1 * *"   # 07:00 UTC, 1st of each month
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  template-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # copier needs history + tags
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run copier update to latest template version
+        run: |
+          uvx copier update --defaults --skip-answered --trust || true
+
+      - name: Open PR if the template changed anything
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(template): copier update to latest version"
+          branch: chore/template-update
+          delete-branch: true
+          title: "chore(template): pull latest template version"
+          body: |
+            Automated `copier update`. This applies upstream template changes
+            (CI, configs, defaults) to this project.
+
+            **Review carefully** — template updates can touch structural files.
+            After merge: `uv lock && uv sync && just check`.
+
+            Conflict markers (`.rej`) may be present if local edits clashed.
+          labels: template-update

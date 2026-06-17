@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard", "schedule:weekly"],
+  "timezone": "Asia/Kolkata",
+  "labels": ["maintenance"],
+  "platformAutomerge": true,
+  "pre-commit": { "enabled": true },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bump the pinned uv version in any workflow (root + template body)",
+      "managerFilePatterns": ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Auto-merge GitHub Actions + pre-commit hook bumps after CI passes.",
+      "matchManagers": ["github-actions", "pre-commit"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Major bumps always reviewed.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["major-update"]
+    }
+  ]
+}

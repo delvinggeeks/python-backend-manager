@@ -1,0 +1,65 @@
+# {{ project_name }}
+
+{{ description }}
+
+Generated from the **witaura-backend-template** (Copier). Two things keep this
+project current automatically:
+
+- **Layer 1 — dependencies:** your libraries stay on the latest compatible
+  versions (`uv lock --upgrade` + Renovate).
+- **Layer 2 — the template itself:** when the upstream template improves (CI,
+  configs, defaults), this project pulls those changes in (`copier update`).
+
+This service uses **{{ agent_framework }}**{% if sync_extras.split() %} with extras: `{{ sync_extras.split() | join('`, `') }}`{% endif %}. Targets Python {{ python_version }}.
+
+## Quick start
+
+```bash
+uv lock                                   # pin today's latest compatible versions
+uv sync{% for e in sync_extras.split() %} --extra {{ e }}{% endfor %}
+uv run pre-commit install
+just run                                  # http://localhost:8000/docs
+```
+
+## Staying updated
+
+### Layer 1 — libraries
+- Manual: `just upgrade` (runs `uv lock --upgrade`), then `uv sync`.
+- Automatic: `.github/workflows/update-deps.yml` opens a weekly PR with the
+  upgraded lockfile, gated by CI.
+- Granular: `renovate.json` manages libraries **plus** GitHub Actions, the
+  Docker base image, pre-commit hook versions, the pinned `uv` version, and
+  `.python-version`.{% if automerge_safe_updates %} Patch/dev/CI updates auto-merge after CI passes; the AI stack and majors are held for review.{% else %} Nothing auto-merges — every update is a reviewed PR.{% endif %}
+
+### Layer 2 — the template
+- Manual: `just template-update` (runs `copier update`).
+- Automatic: `.github/workflows/template-update.yml` opens a monthly PR with the
+  latest template version applied.
+
+> Both layers open **PRs gated by CI** — they never push to `main`. A green CI on
+> an upgrade means "tests pass," not "behaviour is unchanged," so the AI
+> frameworks in particular are always reviewed by a human.
+
+## Layout
+
+```
+src/app/
+  main.py          # app factory -> app.main:app
+  core/            # config (pydantic-settings), logging (structlog), lifespan
+  api/             # router + routes (health, agent)
+  agents/          # framework-agnostic agent runner + model cascade
+  db/              # async SQLAlchemy session + models (db extra)
+  schemas/         # shared pydantic models
+tests/
+```
+
+## Tasks (`just`)
+
+`just setup` · `just run` · `just test` · `just fmt` · `just check` ·
+`just upgrade` (libs) · `just template-update` (template) · `just docker-up`
+
+## Notes
+- Type checking is `mypy`; switch to Astral's `ty` once it's 1.0:
+  `uv remove --dev mypy && uv add --dev ty --prerelease allow`.
+- One agent framework per service — they cannot co-resolve. To switch, re-run
+  `copier update` and re-answer `agent_framework`, then re-lock.

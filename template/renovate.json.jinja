@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard", "schedule:weekly"],
+  "timezone": "Asia/Kolkata",
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 9am on monday"] },
+  "pre-commit": { "enabled": true },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track Python version in .python-version",
+      "managerFilePatterns": ["/(^|/)\\.python-version$/"],
+      "matchStrings": ["(?<currentValue>\\d+\\.\\d+(\\.\\d+)?)"],
+      "depNameTemplate": "python",
+      "datasourceTemplate": "python-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Track pins annotated with a renovate comment (e.g. the uv version in CI)",
+      "managerFilePatterns": ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
+  "packageRules": [
+{% if automerge_safe_updates %}
+    {
+      "description": "Auto-merge low-risk updates after CI passes.",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge all dev-dependency and CI-tooling updates after CI.",
+      "matchDepTypes": ["devDependencies", "dev", "action"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    },
+{% endif %}
+    {
+      "description": "Group routine minor/patch library bumps into one PR.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "non-major dependencies"
+    },
+    {
+      "description": "The volatile AI stack — never auto-merge, always review.",
+      "matchPackageNames": [
+        "anthropic", "openai", "openai-agents", "litellm", "instructor",
+        "/^pydantic-ai/", "/^langchain/", "langgraph"
+      ],
+      "automerge": false,
+      "labels": ["ai-deps", "review-required"],
+      "groupName": "ai frameworks"
+    },
+    {
+      "description": "Major bumps always get their own reviewed PR.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["major-update"]
+    }
+  ]
+}

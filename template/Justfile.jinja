@@ -1,0 +1,47 @@
+# {{ project_name }} — task runner. Install just: `uv tool install rust-just`
+set dotenv-load := true
+
+default:
+    @just --list
+
+# Install venv + this service's default extras + dev deps
+setup:
+    uv sync{% for e in sync_extras.split() %} --extra {{ e }}{% endfor %}
+
+run:
+    uv run uvicorn app.main:app --reload --host 0.0.0.0 --port ${PORT:-8000}
+
+test:
+    uv run pytest
+
+lint:
+    uv run ruff check .
+
+fmt:
+    uv run ruff format .
+    uv run ruff check --fix .
+
+typecheck:
+    uv run mypy src
+
+check: lint typecheck test
+
+# LAYER 1: refresh the lockfile to latest compatible library versions
+upgrade:
+    uv lock --upgrade
+
+outdated:
+    uv pip list --outdated
+
+lock:
+    uv lock
+
+# LAYER 2: pull the latest version of the template itself into this project
+template-update:
+    uvx copier update --trust
+
+docker-build:
+    docker build -t {{ project_slug }} .
+
+docker-up:
+    docker compose up --build

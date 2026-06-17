@@ -1,0 +1,24 @@
+# CLAUDE.md — operating manual for {{ project_name }}
+
+A uv-managed FastAPI backend (agent framework: **{{ agent_framework }}**). Generated
+from python_backend_manager. Read `AGENTS.md` for full conventions.
+
+## Golden rules
+1. uv only — `uv add` / `uv sync` / `uv run`. Never call `pip`.
+2. Settings via `app.core.config.get_settings()`; logging via `app.core.logging`.
+   Never read `os.environ` or use bare `print`/`logging` in app code.
+3. Async-first FastAPI; JSON via `ORJSONResponse`.
+4. One agent framework only ({{ agent_framework }}). Model tiers come from settings
+   (`model_fast` / `model_default` / `model_frontier`) — default to the cheapest that works.
+5. Run `/check` before declaring any task done.
+6. Keep edited Python ruff-clean (a PostToolUse hook formats on save).
+
+## Staying current
+- Libraries: `just upgrade` (uv lock --upgrade) + Renovate.
+- Template: `just template-update` (copier update) pulls upstream template changes.
+
+## Subagents (read-only)
+- `code-reviewer` — review a diff for correctness, async pitfalls, and convention breaks.
+- `build-judge` — PASS/FAIL a feature against its acceptance criteria + next-prompt.
+
+The parent owns edits/commits; subagents only read + report.

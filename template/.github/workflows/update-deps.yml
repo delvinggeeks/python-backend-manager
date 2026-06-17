@@ -1,0 +1,49 @@
+name: Update dependencies
+
+# The uv-native "stay updated" job: every Monday it bumps the lockfile to the
+# latest compatible versions, runs the test suite, and opens ONE pull request.
+# It never pushes to main directly — CI + your review are the safety gate.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # 06:00 UTC every Monday
+  workflow_dispatch: {}    # allow manual runs
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Upgrade lockfile to latest compatible versions
+        run: uv lock --upgrade
+
+      - name: Sync upgraded environment
+        run: uv sync --frozen
+
+      - name: Run gates against the upgrade
+        run: |
+          uv run ruff check .
+          uv run pytest
+
+      - name: Open pull request with the upgrade
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(deps): weekly uv lock --upgrade"
+          branch: chore/deps-upgrade
+          delete-branch: true
+          title: "chore(deps): weekly dependency upgrade"
+          body: |
+            Automated `uv lock --upgrade`. CI gates ran green on this branch.
+
+            Review the `uv.lock` diff — pay attention to the agent-framework and
+            `pydantic`/`openai` lines, which move fast and occasionally break.
+          labels: dependencies

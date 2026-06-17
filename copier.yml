@@ -1,0 +1,122 @@
+# Copier template configuration.
+# Generate:  uvx copier copy gh:witaura/witaura-backend-template ./myservice
+# Update:    cd myservice && uvx copier update   (pulls latest template version)
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_envops:
+  trim_blocks: true
+  lstrip_blocks: true
+
+# Keep the answers file out of templating conflicts and always refresh it.
+_answers_file: .copier-answers.yml
+
+_message_after_copy: |
+  Project "{{ project_name }}" created.
+
+  Next steps:
+    cd {{ _copier_conf.dst_path }}
+    git init && git add -A && git commit -m "chore: scaffold from witaura-backend-template"
+    uv lock && uv sync{% for e in sync_extras.split() %} --extra {{ e }}{% endfor %}
+    uv run pre-commit install
+    just run
+
+  Later, to pull template improvements:  uvx copier update
+
+_message_after_update: |
+  Template update applied to "{{ project_name }}".
+  Review the diff, then: uv lock && uv sync && just check
+
+# ---------------------------------------------------------------------------
+# Questions
+# ---------------------------------------------------------------------------
+project_name:
+  type: str
+  help: Human-readable project name
+  default: WitAura Service
+
+project_slug:
+  type: str
+  help: Distribution / package name (kebab-case)
+  default: "{{ project_name | lower | replace(' ', '-') | replace('_', '-') }}"
+  validator: >-
+    {% if not (project_slug | regex_search('^[a-z][a-z0-9-]+$')) %}
+    Must be lowercase, start with a letter, and contain only letters, digits and hyphens.
+    {% endif %}
+
+description:
+  type: str
+  help: One-line service description
+  default: A WitAura Python backend service
+
+author_name:
+  type: str
+  default: WitAura
+
+author_email:
+  type: str
+  default: admin@witaura.in
+
+python_version:
+  type: str
+  help: Python version to target
+  default: "3.13"
+  choices:
+    - "3.13"
+    - "3.14"
+
+agent_framework:
+  type: str
+  help: AI agent framework for this service (pick one; they cannot coexist)
+  default: pydantic-ai
+  choices:
+    "None — raw provider clients only": none
+    "PydanticAI": pydantic-ai
+    "LangGraph": langgraph
+    "OpenAI Agents SDK": openai-agents
+
+include_db:
+  type: bool
+  help: Include Postgres + pgvector + async SQLAlchemy + Alembic?
+  default: true
+
+include_cache:
+  type: bool
+  help: Include Redis?
+  default: true
+
+include_worker:
+  type: bool
+  help: Include arq background worker?
+  default: false
+
+include_auth:
+  type: bool
+  help: Include JWT / argon2 / Authlib auth deps?
+  default: false
+
+include_observability:
+  type: bool
+  help: Include Sentry + Logfire + OpenTelemetry?
+  default: false
+
+automerge_safe_updates:
+  type: bool
+  help: Let Renovate auto-merge patch & dev-dep updates after CI passes?
+  default: true
+
+# ---------------------------------------------------------------------------
+# Computed (hidden) — the extras this service installs by default.
+# ---------------------------------------------------------------------------
+sync_extras:
+  type: str
+  when: false
+  default: >-
+    {% set parts = [] %}
+    {% if include_db %}{% set _ = parts.append('db') %}{% endif %}
+    {% if include_cache %}{% set _ = parts.append('cache') %}{% endif %}
+    {% if include_worker %}{% set _ = parts.append('worker') %}{% endif %}
+    {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
+    {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
+    {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
+    {{ parts | join(' ') }}

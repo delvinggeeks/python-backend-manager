@@ -1,0 +1,53 @@
+"""Application settings, loaded from environment / .env via pydantic-settings."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_nested_delimiter="__",
+        extra="ignore",
+    )
+
+    # --- App ---
+    app_name: str = "witaura-backend"
+    environment: Literal["local", "staging", "production"] = "local"
+    debug: bool = False
+    log_json: bool = Field(default=False, description="Emit structured JSON logs.")
+
+    # --- Server ---
+    host: str = "0.0.0.0"
+    port: int = 8000
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+
+    # --- Datastores (only used if the `db` / `cache` extras are installed) ---
+    database_url: str | None = None  # postgresql+asyncpg://user:pass@host:5432/db
+    redis_url: str | None = None
+
+    # --- LLM providers (only used if `llm` / an agent extra is installed) ---
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+
+    # --- Model cascade: deterministic handler -> RAG -> frontier model.
+    #     Defaults favour cost/latency; escalate explicitly for hard tasks.
+    model_fast: str = "claude-haiku-4-5-20251001"
+    model_default: str = "claude-sonnet-4-6"
+    model_frontier: str = "claude-opus-4-8"
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Cached singleton — import this everywhere instead of constructing Settings()."""
+    return Settings()
