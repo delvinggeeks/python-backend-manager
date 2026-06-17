@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
 
 from app import __version__
 from app.api.router import api_router
@@ -18,7 +17,6 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=__version__,
         debug=settings.debug,
-        default_response_class=ORJSONResponse,  # faster JSON, no double-encode
         lifespan=lifespan,
     )
     app.add_middleware(

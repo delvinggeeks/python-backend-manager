@@ -39,7 +39,7 @@ async def run_agent(prompt: str, tier: str = "default") -> tuple[str, str]:
 
     # Preferred path: pydantic-ai (typed, lightweight, pydantic-native).
     if find_spec("pydantic_ai") is not None:
-        from pydantic_ai import Agent  # type: ignore[import-not-found]
+        from pydantic_ai import Agent  # type: ignore[import-not-found, unused-ignore]
 
         agent: Agent[None, str] = Agent(f"anthropic:{model}")
         result = await agent.run(prompt)
@@ -47,7 +47,7 @@ async def run_agent(prompt: str, tier: str = "default") -> tuple[str, str]:
 
     # Fallback: raw Anthropic SDK (installed via the `llm` extra).
     if find_spec("anthropic") is not None:
-        from anthropic import AsyncAnthropic  # type: ignore[import-not-found]
+        from anthropic import AsyncAnthropic  # type: ignore[import-not-found, unused-ignore]
 
         client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         msg = await client.messages.create(
