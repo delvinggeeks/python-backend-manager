@@ -105,6 +105,14 @@ include_mcp:
   help: Mount a FastMCP server at /mcp (expose curated tools over MCP)?
   default: false
 
+include_users:
+  type: bool
+  help: >-
+    Scaffold a first-class users/auth capability (fastapi-users: UUID user model,
+    JWT bearer login, register / reset / verify / users routers)? Implies the db +
+    users extras.
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -113,7 +121,6 @@ saas_extras:
   multiselect: true
   default: []
   choices:
-    - users
     - payments
     - email
     - storage
@@ -143,6 +150,7 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
+    {% if include_users %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

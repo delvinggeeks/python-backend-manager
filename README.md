@@ -16,11 +16,12 @@ uv lock && uv sync
 
 You'll be asked for: project name, Python version, agent framework
 (pydantic-ai / langgraph / openai-agents / none), the core capability extras
-(db, cache, worker, auth, observability), an optional FastMCP server, and any
-SaaS + agentic extras (`saas_extras` multiselect: users, payments, email,
-storage, admin, ratelimit, scheduler, api, rag, mcp) to enable. Whatever you
-pick is declared in `pyproject.toml` so Renovate / `uv lock` keep it latest and
-Python-compatible.
+(db, cache, worker, auth, observability), an optional FastMCP server, an optional
+first-class **users/auth** capability (`include_users` — scaffolds a fastapi-users
+JWT stack, not just the dependency), and any SaaS + agentic extras (`saas_extras`
+multiselect: payments, email, storage, admin, ratelimit, scheduler, api, rag, mcp)
+to enable. Whatever you pick is declared in `pyproject.toml` so Renovate / `uv lock`
+keep it latest and Python-compatible.
 
 ## Update an existing project to the latest template
 

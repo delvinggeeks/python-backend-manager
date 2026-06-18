@@ -1,0 +1,50 @@
+"""End-to-end users/auth flow — requires the `db` + `users` extras.
+
+Registers a user, logs in for a JWT, then calls an authenticated route. Runs against
+the throwaway SQLite database configured in `conftest.pytest_configure`, so it needs
+no external Postgres.
+"""
+
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+
+from app.db.models import Base
+from app.db.session import engine
+from app.users.models import User  # noqa: F401  (registers the `user` table on Base)
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def test_register_login_authenticated(client: AsyncClient) -> None:
+    email = "alice@example.com"
+    password = "s3cret-passw0rd"
+
+    # Register
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] == email
+
+    # Log in (OAuth2 password form: username + password)
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    token = r.json()["access_token"]
+    assert token
+
+    # Authenticated route returns the current user
+    r = await client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] == email
+
+    # ...and is rejected without a token
+    r = await client.get("/users/me")
+    assert r.status_code == 401

@@ -80,6 +80,9 @@ dev = [
     "polyfactory>=2.18",
     "respx>=0.21",
     "testcontainers>=4.8",
+{% if include_users %}
+    "aiosqlite>=0.20",
+{% endif %}
 ]
 
 [tool.uv]

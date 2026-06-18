@@ -1,0 +1,37 @@
+"""Pytest fixtures."""
+
+from __future__ import annotations
+
+{% if include_users %}
+import os
+import tempfile
+
+{% endif %}
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+{% if include_users %}
+
+def pytest_configure() -> None:
+    # Users tests need a database; default to a throwaway SQLite file so the suite
+    # runs with no external Postgres. Set DATABASE_URL yourself to test against PG.
+    # Set before `app.main` (which builds the engine at import) is ever imported.
+    db_file = os.path.join(tempfile.gettempdir(), "{{ project_slug }}-test.sqlite3")
+    os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{db_file}")
+    os.environ.setdefault("USERS_JWT_SECRET", "testing-jwt-secret-not-for-production-use")
+{% else %}
+from app.main import create_app
+{% endif %}
+
+
+@pytest.fixture
+async def client():
+{% if include_users %}
+    # Imported lazily so DATABASE_URL (set in pytest_configure) is in place first.
+    from app.main import create_app
+
+{% endif %}
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
