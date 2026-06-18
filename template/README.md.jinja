@@ -53,6 +53,24 @@ src/app/
 tests/
 ```
 
+{% if include_db or include_users %}
+## Migrations (Alembic)
+
+Schema changes are managed with Alembic. `migrations/env.py` reads `DATABASE_URL` from
+your settings at run time and targets `app.db.models.Base.metadata`, so autogenerate sees
+every mapped table.
+
+```bash
+just migration "describe the change"   # alembic revision --autogenerate -m ...
+just migrate                           # alembic upgrade head
+```
+
+{% if include_users %}An initial migration for the `items` + `user` tables ships in
+`migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`
+starts empty: generate your first migration with `just migration "initial schema"`,
+review it, then `just migrate`.{% endif %}
+
+{% endif %}
 ## Tasks (`just`)
 
 `just setup` · `just run` · `just test` · `just fmt` · `just check` ·

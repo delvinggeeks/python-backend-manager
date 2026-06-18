@@ -45,3 +45,18 @@ docker-build:
 
 docker-up:
     docker compose up --build
+{% if include_db or include_users %}
+
+# Database migrations (Alembic) — DB-backed services only.
+# New migration from model changes, e.g. `just migration "add user table"`
+migration message:
+    uv run alembic revision --autogenerate -m "{{ '{{ message }}' }}"
+
+# Apply all pending migrations (run before serving)
+migrate:
+    uv run alembic upgrade head
+
+# Roll the most recent migration back
+migrate-down:
+    uv run alembic downgrade -1
+{% endif %}
