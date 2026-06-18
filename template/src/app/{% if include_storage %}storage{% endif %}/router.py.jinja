@@ -1,0 +1,140 @@
+"""Object-storage router (S3-compatible). Requires the `storage` extra.
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
+Org-scoped (mounted under ``/orgs``): keys are prefixed by org id so tenants are isolated,
+and every route is authorised by the caller's membership in ``{org_id}`` (reusing the
+tenancy dependency):
+
+    POST   /orgs/{org_id}/storage/upload-url     presigned PUT url for a key
+    GET    /orgs/{org_id}/storage/objects        list the org's keys
+    GET    /orgs/{org_id}/storage/download-url   presigned GET url for a key
+    DELETE /orgs/{org_id}/storage/objects        delete a key
+{% else %}
+Mounted under ``/storage`` with plain keys:
+
+    POST   /storage/upload-url     presigned PUT url for a key
+    GET    /storage/objects        list keys
+    GET    /storage/download-url   presigned GET url for a key
+    DELETE /storage/objects        delete a key
+{% endif %}
+Routes return presigned URLs for direct client<->S3 transfer; the service never proxies
+object bytes and never sets a public ACL.
+"""
+
+from __future__ import annotations
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
+
+import uuid
+
+from fastapi import APIRouter, Depends, status
+
+from app.core.config import get_settings
+from app.storage import client
+from app.storage.keys import build_key, relative_key, tenant_prefix
+from app.storage.schemas import (
+    ObjectList,
+    PresignedDownloadResponse,
+    PresignedUploadRequest,
+    PresignedUploadResponse,
+    StorageObject,
+)
+from app.tenancy.dependencies import get_current_membership
+from app.tenancy.models import Membership
+
+router = APIRouter()
+
+
+@router.post("/{org_id}/storage/upload-url", response_model=PresignedUploadResponse)
+async def create_upload_url(
+    org_id: uuid.UUID,
+    payload: PresignedUploadRequest,
+    membership: Membership = Depends(get_current_membership),
+) -> PresignedUploadResponse:
+    """Return a presigned URL the caller can PUT their object to directly."""
+    expires_in = get_settings().s3_presign_expiry_seconds
+    stored_key = build_key(payload.key, org_id=str(org_id))
+    url = await client.presigned_put_url(
+        stored_key, expires_in=expires_in, content_type=payload.content_type
+    )
+    return PresignedUploadResponse(key=payload.key, url=url, expires_in=expires_in)
+
+
+@router.get("/{org_id}/storage/objects", response_model=ObjectList)
+async def list_objects(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+) -> ObjectList:
+    """List the calling org's object keys (its tenant prefix only)."""
+    org = str(org_id)
+    stored = await client.list_keys(prefix=tenant_prefix(org))
+    return ObjectList(objects=[StorageObject(key=relative_key(k, org_id=org)) for k in stored])
+
+
+@router.get("/{org_id}/storage/download-url", response_model=PresignedDownloadResponse)
+async def create_download_url(
+    org_id: uuid.UUID,
+    key: str,
+    membership: Membership = Depends(get_current_membership),
+) -> PresignedDownloadResponse:
+    """Return a presigned URL the caller can GET their object from directly."""
+    expires_in = get_settings().s3_presign_expiry_seconds
+    stored_key = build_key(key, org_id=str(org_id))
+    url = await client.presigned_get_url(stored_key, expires_in=expires_in)
+    return PresignedDownloadResponse(key=key, url=url, expires_in=expires_in)
+
+
+@router.delete("/{org_id}/storage/objects", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_object(
+    org_id: uuid.UUID,
+    key: str,
+    membership: Membership = Depends(get_current_membership),
+) -> None:
+    """Delete one of the org's objects."""
+    await client.remove_object(build_key(key, org_id=str(org_id)))
+{% else %}
+
+from fastapi import APIRouter, status
+
+from app.core.config import get_settings
+from app.storage import client
+from app.storage.keys import build_key
+from app.storage.schemas import (
+    ObjectList,
+    PresignedDownloadResponse,
+    PresignedUploadRequest,
+    PresignedUploadResponse,
+    StorageObject,
+)
+
+router = APIRouter()
+
+
+@router.post("/upload-url", response_model=PresignedUploadResponse)
+async def create_upload_url(payload: PresignedUploadRequest) -> PresignedUploadResponse:
+    """Return a presigned URL the caller can PUT their object to directly."""
+    expires_in = get_settings().s3_presign_expiry_seconds
+    url = await client.presigned_put_url(
+        build_key(payload.key), expires_in=expires_in, content_type=payload.content_type
+    )
+    return PresignedUploadResponse(key=payload.key, url=url, expires_in=expires_in)
+
+
+@router.get("/objects", response_model=ObjectList)
+async def list_objects() -> ObjectList:
+    """List stored object keys."""
+    stored = await client.list_keys()
+    return ObjectList(objects=[StorageObject(key=k) for k in stored])
+
+
+@router.get("/download-url", response_model=PresignedDownloadResponse)
+async def create_download_url(key: str) -> PresignedDownloadResponse:
+    """Return a presigned URL the caller can GET their object from directly."""
+    expires_in = get_settings().s3_presign_expiry_seconds
+    url = await client.presigned_get_url(build_key(key), expires_in=expires_in)
+    return PresignedDownloadResponse(key=key, url=url, expires_in=expires_in)
+
+
+@router.delete("/objects", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_object(key: str) -> None:
+    """Delete a stored object."""
+    await client.remove_object(build_key(key))
+{% endif %}
