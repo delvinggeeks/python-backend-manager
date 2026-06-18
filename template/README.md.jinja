@@ -72,6 +72,20 @@ The `Organization` and `Membership` models live in `app.tenancy.models`; the per
 `role` is a free string (`owner` / `admin` / `member` by convention) ready to be enforced by
 a permissions layer.
 
+{% if include_rbac %}
+### Roles & permissions (RBAC)
+
+The `app.rbac` package turns that `role` into enforcement. `ROLE_RANK` orders the roles
+(`owner > admin > member` — extend by adding one) and `SCOPES_BY_ROLE` maps each role to
+permission scopes. Two FastAPI dependency factories guard routes:
+
+- `require_role("admin")` — the caller must hold at least that role in the org, else `403`.
+- `require_scope("members:write")` — the caller's role must grant that scope, else `403`.
+
+They ship applied as the example: adding a member requires the `admin` role and removing a
+member requires the `members:write` scope, so a plain `member` is denied both.
+
+{% endif %}
 {% endif %}
 {% if include_db or include_users or include_tenancy or include_rbac %}
 ## Migrations (Alembic)
