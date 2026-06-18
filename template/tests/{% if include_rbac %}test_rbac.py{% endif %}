@@ -1,0 +1,86 @@
+"""RBAC enforcement over the /orgs member routes — needs db + users + tenancy + rbac.
+
+Exercises the role hierarchy end-to-end: an owner and an admin may use the admin-only
+member routes, a plain member is denied (403), and the pure helpers agree.
+"""
+
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+
+from app.db.models import Base
+from app.db.session import engine
+from app.rbac import has_role, role_grants_scope
+from app.tenancy.models import ADMIN, MEMBER, OWNER, Membership
+from app.users.models import User  # noqa: F401  (registers the `user` table on Base)
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _register_and_login(client: AsyncClient, email: str, password: str) -> tuple[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    user_id = r.json()["id"]
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return user_id, r.json()["access_token"]
+
+
+def test_role_helpers() -> None:
+    assert has_role(Membership(role=OWNER), ADMIN) is True
+    assert has_role(Membership(role=ADMIN), ADMIN) is True
+    assert has_role(Membership(role=MEMBER), ADMIN) is False
+    assert role_grants_scope(ADMIN, "members:write") is True
+    assert role_grants_scope(MEMBER, "members:write") is False
+
+
+async def test_admin_only_member_routes(client: AsyncClient) -> None:
+    pw = "s3cret-passw0rd"
+    _, owner_token = await _register_and_login(client, "owner@example.com", pw)
+    admin_id, admin_token = await _register_and_login(client, "admin@example.com", pw)
+    member_id, member_token = await _register_and_login(client, "member@example.com", pw)
+    target_id, _ = await _register_and_login(client, "target@example.com", pw)
+    owner = {"Authorization": f"Bearer {owner_token}"}
+    admin = {"Authorization": f"Bearer {admin_token}"}
+    member = {"Authorization": f"Bearer {member_token}"}
+
+    # Owner creates the org and seeds an admin and a plain member.
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=owner)
+    assert r.status_code == 201, r.text
+    org_id = r.json()["id"]
+    for uid, role in ((admin_id, "admin"), (member_id, "member")):
+        r = await client.post(
+            f"/orgs/{org_id}/members",
+            json={"user_id": uid, "role": role},
+            headers=owner,
+        )
+        assert r.status_code == 201, r.text
+
+    # A plain member is denied the admin-only add and the members:write delete.
+    r = await client.post(
+        f"/orgs/{org_id}/members",
+        json={"user_id": target_id, "role": "member"},
+        headers=member,
+    )
+    assert r.status_code == 403, r.text
+    r = await client.delete(f"/orgs/{org_id}/members/{admin_id}", headers=member)
+    assert r.status_code == 403, r.text
+
+    # The admin (one rank below owner) is allowed on both routes.
+    r = await client.post(
+        f"/orgs/{org_id}/members",
+        json={"user_id": target_id, "role": "member"},
+        headers=admin,
+    )
+    assert r.status_code == 201, r.text
+    r = await client.delete(f"/orgs/{org_id}/members/{target_id}", headers=admin)
+    assert r.status_code == 204, r.text

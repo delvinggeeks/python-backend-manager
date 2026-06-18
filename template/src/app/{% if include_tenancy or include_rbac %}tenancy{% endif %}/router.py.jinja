@@ -15,8 +15,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
+{% if include_rbac %}
+from app.rbac import require_role, require_scope
+{% endif %}
 from app.tenancy.dependencies import get_current_membership
+{% if include_rbac %}
+from app.tenancy.models import ADMIN, OWNER, Membership, Organization
+{% else %}
 from app.tenancy.models import OWNER, Membership, Organization
+{% endif %}
 from app.tenancy.schemas import (
     MemberAdd,
     MembershipRead,
@@ -89,7 +96,11 @@ async def list_members(
 async def add_member(
     org_id: uuid.UUID,
     payload: MemberAdd,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
     membership: Membership = Depends(get_current_membership),
+{% endif %}
     session: AsyncSession = Depends(get_session),
 ) -> Membership:
     """Add a user to the organization."""
@@ -115,7 +126,11 @@ async def add_member(
 async def remove_member(
     org_id: uuid.UUID,
     user_id: uuid.UUID,
+{% if include_rbac %}
+    membership: Membership = Depends(require_scope("members:write")),
+{% else %}
     membership: Membership = Depends(get_current_membership),
+{% endif %}
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Remove a user from the organization."""

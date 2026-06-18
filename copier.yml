@@ -121,6 +121,15 @@ include_tenancy:
     Implies the users capability (and therefore the db + users extras).
   default: false
 
+include_rbac:
+  type: bool
+  help: >-
+    Scaffold RBAC / permissions over memberships: an `app/rbac` package with a role
+    hierarchy (owner > admin > member, extensible), `require_role(...)` /
+    `require_scope(...)` FastAPI dependencies, and a permission-check helper applied
+    to the `/orgs` member routes. Implies the tenancy capability (and its users + db).
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -157,7 +166,7 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}
