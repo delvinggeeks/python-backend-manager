@@ -1,32 +1,45 @@
-"""Billing routers. Requires the `db` + `users` + `payments` extras.
+"""Billing routers (provider-agnostic). Requires the `db` + `users` + `payments` extras.
 
-``router`` is org-scoped (mounted under ``/orgs``) and authorised by the caller's
-membership in ``{org_id}`` via the tenancy dependency:
+Both routers depend on :class:`~app.billing.ports.PaymentsPort` (resolved by
+``get_payments_provider`` from ``settings.payments_provider``) — they never name Stripe or
+Razorpay, and speak only the normalized :class:`~app.billing.ports.PaymentEvent` /
+``SubscriptionState``.
 
-    POST /orgs/{org_id}/billing/checkout-session   start Stripe Checkout (returns a url)
-    POST /orgs/{org_id}/billing/portal-session      open the Stripe customer portal
-    GET  /orgs/{org_id}/billing/subscription        the org's synced subscription
-    GET  /orgs/{org_id}/billing/usage               example route gated by require_feature(...)
+``router`` is org-scoped (mounted under ``/orgs``) and authorised by the caller's membership
+in ``{org_id}`` via the tenancy dependency:
 
-``webhook_router`` exposes ``POST /billing/webhook`` — called by Stripe, not a user, so it
-is NOT org-scoped: it verifies the signature, dedupes by event id (idempotency), and syncs
-the ``Subscription`` row from ``customer.subscription.*`` events.
+    POST   /orgs/{org_id}/billing/checkout-session   start provider checkout (returns a url)
+    POST   /orgs/{org_id}/billing/portal-session      open the provider customer portal
+    GET    /orgs/{org_id}/billing/subscription        the org's subscription (local, else live)
+    DELETE /orgs/{org_id}/billing/subscription        cancel the org's subscription
+    GET    /orgs/{org_id}/billing/usage               example route gated by require_feature(...)
+
+``webhook_router`` exposes ``POST /billing/webhook`` — called by the provider, not a user, so
+it is NOT org-scoped: it reads the active provider's ``signature_header``, verifies via the
+port, dedupes by ``(provider, event_id)`` (idempotency), and syncs the ``Subscription`` row
+from normalized subscription-lifecycle events.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.billing import client
 from app.billing.dependencies import require_feature
 from app.billing.entitlements import FREE_PLAN
-from app.billing.models import ProcessedStripeEvent, Subscription
+from app.billing.models import ProcessedEvent, Subscription
+from app.billing.ports import (
+    SUBSCRIPTION_EVENTS,
+    PaymentError,
+    PaymentEvent,
+    PaymentsPort,
+    WebhookVerificationError,
+)
+from app.billing.provider import get_payments_provider
 from app.billing.schemas import (
     CheckoutSessionCreate,
     CheckoutSessionRead,
@@ -41,15 +54,6 @@ from app.tenancy.models import Membership, Organization
 router = APIRouter()
 webhook_router = APIRouter()
 
-# Stripe subscription-lifecycle events we mirror into the local Subscription row.
-_SUBSCRIPTION_EVENTS = frozenset(
-    {
-        "customer.subscription.created",
-        "customer.subscription.updated",
-        "customer.subscription.deleted",
-    }
-)
-
 
 async def _get_org(org_id: uuid.UUID, session: AsyncSession) -> Organization:
     org = await session.get(Organization, org_id)
@@ -58,32 +62,24 @@ async def _get_org(org_id: uuid.UUID, session: AsyncSession) -> Organization:
     return org
 
 
-async def _ensure_customer(org: Organization, session: AsyncSession) -> str:
-    """Return the org's Stripe customer id, creating the customer on first use."""
-    if org.stripe_customer_id is None:
-        org.stripe_customer_id = client.create_customer(name=org.name, organization_id=str(org.id))
-        await session.commit()
-    return org.stripe_customer_id
-
-
 @router.post("/{org_id}/billing/checkout-session", response_model=CheckoutSessionRead)
 async def create_checkout_session(
     org_id: uuid.UUID,
     payload: CheckoutSessionCreate,
     membership: Membership = Depends(get_current_membership),
     session: AsyncSession = Depends(get_session),
+    payments: PaymentsPort = Depends(get_payments_provider),
 ) -> CheckoutSessionRead:
-    """Start a Stripe Checkout Session for the org's subscription."""
+    """Start a checkout for the org's subscription with the active provider."""
     org = await _get_org(org_id, session)
-    price_id = payload.price_id or get_settings().stripe_default_price_id
-    if not price_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No price_id given and STRIPE_DEFAULT_PRICE_ID is not configured",
-        )
-    customer_id = await _ensure_customer(org, session)
-    checkout = client.create_checkout_session(customer_id=customer_id, price_id=price_id)
-    return CheckoutSessionRead(id=checkout["id"], url=checkout["url"])
+    plan = payload.plan or get_settings().payments_default_plan
+    try:
+        url = await payments.start_checkout(org, plan)
+    except PaymentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # The adapter may have lazily created a provider customer on the org — persist it.
+    await session.commit()
+    return CheckoutSessionRead(url=url, provider=payments.name)
 
 
 @router.post("/{org_id}/billing/portal-session", response_model=PortalSessionRead)
@@ -91,12 +87,13 @@ async def create_portal_session(
     org_id: uuid.UUID,
     membership: Membership = Depends(get_current_membership),
     session: AsyncSession = Depends(get_session),
+    payments: PaymentsPort = Depends(get_payments_provider),
 ) -> PortalSessionRead:
-    """Open the Stripe customer portal for the org."""
+    """Open the active provider's customer portal for the org."""
     org = await _get_org(org_id, session)
-    customer_id = await _ensure_customer(org, session)
-    portal = client.create_billing_portal_session(customer_id=customer_id)
-    return PortalSessionRead(url=portal["url"])
+    url = await payments.open_customer_portal(org)
+    await session.commit()  # portal may have lazily created a provider customer
+    return PortalSessionRead(url=url)
 
 
 @router.get("/{org_id}/billing/subscription", response_model=SubscriptionRead)
@@ -104,24 +101,51 @@ async def get_subscription(
     org_id: uuid.UUID,
     membership: Membership = Depends(get_current_membership),
     session: AsyncSession = Depends(get_session),
+    payments: PaymentsPort = Depends(get_payments_provider),
 ) -> SubscriptionRead:
-    """Return the org's current subscription, synced from Stripe webhooks."""
+    """Return the org's subscription — the locally synced row, or a live provider lookup."""
     result = await session.execute(
         select(Subscription).where(Subscription.organization_id == org_id)
     )
     subscription = result.scalar_one_or_none()
-    if subscription is None:
+    if subscription is not None:
+        return SubscriptionRead(
+            organization_id=subscription.organization_id,
+            provider=subscription.provider,
+            provider_subscription_id=subscription.provider_subscription_id,
+            status=subscription.status,
+            plan=subscription.plan,
+            current_period_end=subscription.current_period_end,
+        )
+    # No webhook has synced a row yet — ask the provider directly.
+    org = await _get_org(org_id, session)
+    state = await payments.get_subscription(org)
+    if state is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No subscription for this organization",
         )
     return SubscriptionRead(
-        organization_id=subscription.organization_id,
-        stripe_subscription_id=subscription.stripe_subscription_id,
-        status=subscription.status,
-        plan=subscription.plan,
-        current_period_end=subscription.current_period_end,
+        organization_id=org_id,
+        provider=payments.name,
+        provider_subscription_id=state.subscription_id,
+        status=state.status,
+        plan=state.plan,
+        current_period_end=state.period_end,
     )
+
+
+@router.delete("/{org_id}/billing/subscription")
+async def cancel_subscription(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+    payments: PaymentsPort = Depends(get_payments_provider),
+) -> dict[str, str]:
+    """Cancel the org's subscription with the active provider (a no-op if none)."""
+    org = await _get_org(org_id, session)
+    await payments.cancel(org)
+    return {"status": "canceled"}
 
 
 @router.get("/{org_id}/billing/usage")
@@ -137,27 +161,14 @@ async def billing_usage(
     }
 
 
-def _period_end_to_datetime(value: Any) -> datetime | None:
-    """Convert a Stripe unix timestamp to a naive-UTC datetime (matching how we store)."""
-    if value is None:
-        return None
-    return datetime.fromtimestamp(int(value), tz=UTC).replace(tzinfo=None)
-
-
-async def _sync_subscription(obj: dict[str, Any], session: AsyncSession) -> None:
-    """Upsert the org's Subscription row from a Stripe subscription object."""
-    customer_id = obj.get("customer")
+async def _sync_subscription(provider: str, event: PaymentEvent, session: AsyncSession) -> None:
+    """Upsert the org's Subscription row from a normalized subscription event."""
     result = await session.execute(
-        select(Organization).where(Organization.stripe_customer_id == customer_id)
+        select(Organization).where(Organization.payments_customer_id == event.customer_ref)
     )
     org = result.scalar_one_or_none()
     if org is None:
         return  # an event for a customer we don't know — nothing to sync
-
-    items = obj.get("items", {}).get("data", [])
-    price_id = items[0]["price"]["id"] if items else None
-    plan = get_settings().stripe_price_to_plan.get(price_id, FREE_PLAN) if price_id else FREE_PLAN
-    period_end = _period_end_to_datetime(obj.get("current_period_end"))
 
     existing = await session.execute(
         select(Subscription).where(Subscription.organization_id == org.id)
@@ -167,42 +178,48 @@ async def _sync_subscription(obj: dict[str, Any], session: AsyncSession) -> None
         session.add(
             Subscription(
                 organization_id=org.id,
-                stripe_subscription_id=obj["id"],
-                status=obj["status"],
-                plan=plan,
-                current_period_end=period_end,
+                provider=provider,
+                provider_subscription_id=event.subscription_id or "",
+                status=event.status or "",
+                plan=event.plan or FREE_PLAN,
+                current_period_end=event.period_end,
             )
         )
     else:
-        subscription.stripe_subscription_id = obj["id"]
-        subscription.status = obj["status"]
-        subscription.plan = plan
-        subscription.current_period_end = period_end
+        subscription.provider = provider
+        subscription.provider_subscription_id = (
+            event.subscription_id or subscription.provider_subscription_id
+        )
+        subscription.status = event.status or subscription.status
+        subscription.plan = event.plan or subscription.plan
+        subscription.current_period_end = event.period_end
 
 
 @webhook_router.post("/webhook")
-async def stripe_webhook(
+async def payments_webhook(
     request: Request,
     session: AsyncSession = Depends(get_session),
+    payments: PaymentsPort = Depends(get_payments_provider),
 ) -> dict[str, str]:
-    """Receive Stripe events: verify the signature, dedupe by id, sync the subscription."""
-    payload = await request.body()
-    signature = request.headers.get("stripe-signature", "")
+    """Receive provider events: verify the signature, dedupe by (provider, id), then sync."""
+    raw_body = await request.body()
+    signature = request.headers.get(payments.signature_header, "")
     try:
-        event = client.construct_event(payload, signature)
-    except client.WebhookVerificationError as exc:
+        event = payments.verify_webhook(raw_body, signature)
+    except WebhookVerificationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid Stripe signature",
+            detail="Invalid webhook signature",
         ) from exc
 
-    event_id = event["id"]
-    # Idempotency: a replayed event id is already recorded -> no-op.
-    if await session.get(ProcessedStripeEvent, event_id) is not None:
+    # Idempotency keyed by (provider, event_id): a replay from any provider is a no-op.
+    if await session.get(ProcessedEvent, (payments.name, event.event_id)) is not None:
         return {"status": "duplicate"}
-    session.add(ProcessedStripeEvent(id=event_id, type=event["type"]))
+    session.add(
+        ProcessedEvent(provider=payments.name, event_id=event.event_id, type=event.event_type)
+    )
 
-    if event["type"] in _SUBSCRIPTION_EVENTS:
-        await _sync_subscription(event["data"]["object"], session)
+    if event.event_type in SUBSCRIPTION_EVENTS:
+        await _sync_subscription(payments.name, event, session)
     await session.commit()
     return {"status": "ok"}

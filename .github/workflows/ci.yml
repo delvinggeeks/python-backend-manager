@@ -122,6 +122,9 @@ jobs:
           - { capability: rbac,     data: "--data include_rbac=true",     extras: "--extra db --extra users" }
           - { capability: api_keys, data: "--data include_api_keys=true", extras: "--extra db --extra users" }
           - { capability: billing,  data: "--data include_billing=true",  extras: "--extra db --extra users --extra payments" }
+          # Same billing module, but the OTHER provider — proves the Razorpay adapter + the
+          # shared PaymentsPort contract test pass under payments_provider=razorpay too.
+          - { capability: billing_razorpay, data: "--data include_billing=true --data payments_provider=razorpay", extras: "--extra db --extra users --extra payments" }
           # storage is db-independent; we exercise it WITH tenancy so the org-scoped,
           # tenant-prefixed path + membership dependency are covered and the alembic
           # round-trip below is meaningful. The plain-key path is unit-tested in-module.

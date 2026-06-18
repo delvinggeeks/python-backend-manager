@@ -108,26 +108,42 @@ or expired keys, stamps `last_used_at`, and binds the acting identity + org.
 
 {% endif %}
 {% if include_billing %}
-## Billing & entitlements (Stripe)
+## Billing & entitlements (provider-agnostic)
 
-Each organization is a **Stripe customer** (`organizations.stripe_customer_id`, created
-lazily on first checkout/portal access). Plans map to features via `app.billing.entitlements`,
-and a `require_feature(...)` dependency gates routes on the org's current plan.
+Payments go through a **hexagonal port**: `app.billing.ports.PaymentsPort` is the app's-needs
+contract; `app.billing.adapters` holds the **Stripe** and **Razorpay** implementations; the
+active one is selected by `PAYMENTS_PROVIDER` (default `{{ payments_provider }}`). The router,
+entitlements, webhook, and `Subscription` model speak only the port and the normalized
+`PaymentEvent` — they never import a vendor SDK. Each org is a provider customer
+(`organizations.payments_customer_id`, created lazily on first checkout/portal access). Plans
+map to features via `app.billing.entitlements`, gated by a `require_feature(...)` dependency.
 
 ```text
-POST /orgs/{org_id}/billing/checkout-session   start a Stripe Checkout (returns a URL)
-POST /orgs/{org_id}/billing/portal-session     open the Stripe customer portal (returns a URL)
-GET  /orgs/{org_id}/billing/subscription       the org's synced subscription (status/plan/period)
-GET  /orgs/{org_id}/billing/usage              example route gated by require_feature(...)
-POST /billing/webhook                           Stripe events (signature-verified, idempotent)
+POST   /orgs/{org_id}/billing/checkout-session   start provider checkout (returns a URL)
+POST   /orgs/{org_id}/billing/portal-session     open the provider customer portal (returns a URL)
+GET    /orgs/{org_id}/billing/subscription       the org's subscription (local row, else live lookup)
+DELETE /orgs/{org_id}/billing/subscription       cancel the org's subscription
+GET    /orgs/{org_id}/billing/usage              example route gated by require_feature(...)
+POST   /billing/webhook                           provider events (signature-verified, idempotent)
 ```
 
-The org-scoped routes reuse the tenancy membership dependency. The webhook verifies the
-Stripe **signature** (rejecting forgeries with `400`) and **dedupes** replayed events by
-id, then syncs a `Subscription` row (status / plan / period) from
-`customer.subscription.*` events. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
-`STRIPE_DEFAULT_PRICE_ID`, and `STRIPE_PRICE_TO_PLAN` in your environment — **test-mode keys
-only**, never hard-coded.
+The org-scoped routes reuse the tenancy membership dependency. The webhook reads the active
+provider's signature header, verifies the **signature** via the port (rejecting forgeries with
+`400`), and **dedupes** replayed events by `(provider, event_id)`, then syncs a `Subscription`
+row from normalized subscription-lifecycle events.
+
+Configure the active provider's credentials in your environment — **test-mode keys only**,
+never hard-coded:
+- **Stripe** (`PAYMENTS_PROVIDER=stripe`): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `STRIPE_PLAN_TO_PRICE` (internal plan → Stripe Price id).
+- **Razorpay** (`PAYMENTS_PROVIDER=razorpay`): `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+  `RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_PLAN_TO_PLAN_ID` (internal plan → Razorpay Plan id),
+  `RAZORPAY_PORTAL_URL`.
+
+**Adding a payment provider** = implement `PaymentsPort` in `app.billing.adapters`, register it
+in `app.billing.provider`, and add its key to the `payments_provider` choices — see AGENTS.md.
+The one provider-specific boundary is the **frontend checkout handoff**: `start_checkout`
+returns each provider's own hosted-checkout redirect URL.
 
 {% endif %}
 {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}

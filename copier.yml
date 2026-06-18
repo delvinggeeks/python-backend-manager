@@ -142,13 +142,25 @@ include_api_keys:
 include_billing:
   type: bool
   help: >-
-    Scaffold billing & entitlements (Stripe): a Stripe customer per organization,
-    `/orgs/{org_id}/billing` create-checkout-session + customer-portal routers, a
-    signature-verified webhook with idempotent (deduped) event handling, a Subscription
-    model synced from webhook events, an entitlements map with a `require_feature(...)`
-    dependency applied to an example route, and a migration. Implies the tenancy
-    capability (and therefore its users + db) plus the `payments` (stripe) extra.
+    Scaffold billing & entitlements (provider-agnostic): a hexagonal PaymentsPort with
+    swappable Stripe + Razorpay adapters (pick the active one below), a provider customer
+    per organization, `/orgs/{org_id}/billing` checkout-session + customer-portal routers,
+    a signature-verified webhook with idempotent (deduped) event handling, a Subscription
+    model synced from normalized events, an entitlements map with a `require_feature(...)`
+    dependency applied to an example route, and a migration. Implies the tenancy capability
+    (and therefore its users + db) plus the `payments` extra (both provider SDKs).
   default: false
+
+payments_provider:
+  type: str
+  help: >-
+    Active payments provider for this service. Both adapters ship; this picks the default
+    one (override at runtime with PAYMENTS_PROVIDER). Razorpay is the India-first choice.
+  choices:
+    - stripe
+    - razorpay
+  default: stripe
+  when: "{{ include_billing }}"
 
 include_storage:
   type: bool

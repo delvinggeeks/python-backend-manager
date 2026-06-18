@@ -1,10 +1,13 @@
-"""billing schema (subscriptions + processed events + org stripe_customer_id)
+"""billing schema (subscriptions + processed events + org payments_customer_id)
 
 Revision ID: 0004_billing
 Revises: {% if include_api_keys %}0003_api_keys{% else %}0002_tenancy{% endif %}
 
 Create Date: ships with the template (include_billing)
 
+Provider-agnostic: column/table names never name a vendor. `subscriptions` records the
+owning `provider` plus that provider's subscription id; `processed_events` has a composite
+(provider, event_id) primary key so a replayed webhook from any provider is idempotent.
 """
 
 from collections.abc import Sequence
@@ -21,22 +24,23 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Stripe customer id lives on the organizations table (one customer per org).
+    # Provider customer id lives on the organizations table (one customer per org).
     op.add_column(
         "organizations",
-        sa.Column("stripe_customer_id", sa.String(length=255), nullable=True),
+        sa.Column("payments_customer_id", sa.String(length=255), nullable=True),
     )
     op.create_index(
-        op.f("ix_organizations_stripe_customer_id"),
+        op.f("ix_organizations_payments_customer_id"),
         "organizations",
-        ["stripe_customer_id"],
+        ["payments_customer_id"],
         unique=True,
     )
     op.create_table(
         "subscriptions",
         sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
         sa.Column("organization_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
-        sa.Column("stripe_subscription_id", sa.String(length=255), nullable=False),
+        sa.Column("provider", sa.String(length=50), nullable=False),
+        sa.Column("provider_subscription_id", sa.String(length=255), nullable=False),
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("plan", sa.String(length=50), nullable=False),
         sa.Column("current_period_end", sa.DateTime(), nullable=True),
@@ -51,24 +55,25 @@ def upgrade() -> None:
         unique=True,
     )
     op.create_index(
-        op.f("ix_subscriptions_stripe_subscription_id"),
+        op.f("ix_subscriptions_provider_subscription_id"),
         "subscriptions",
-        ["stripe_subscription_id"],
+        ["provider_subscription_id"],
         unique=True,
     )
     op.create_table(
-        "processed_stripe_events",
-        sa.Column("id", sa.String(length=255), nullable=False),
+        "processed_events",
+        sa.Column("provider", sa.String(length=50), nullable=False),
+        sa.Column("event_id", sa.String(length=255), nullable=False),
         sa.Column("type", sa.String(length=100), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
+        sa.PrimaryKeyConstraint("provider", "event_id"),
     )
 
 
 def downgrade() -> None:
-    op.drop_table("processed_stripe_events")
-    op.drop_index(op.f("ix_subscriptions_stripe_subscription_id"), table_name="subscriptions")
+    op.drop_table("processed_events")
+    op.drop_index(op.f("ix_subscriptions_provider_subscription_id"), table_name="subscriptions")
     op.drop_index(op.f("ix_subscriptions_organization_id"), table_name="subscriptions")
     op.drop_table("subscriptions")
-    op.drop_index(op.f("ix_organizations_stripe_customer_id"), table_name="organizations")
-    op.drop_column("organizations", "stripe_customer_id")
+    op.drop_index(op.f("ix_organizations_payments_customer_id"), table_name="organizations")
+    op.drop_column("organizations", "payments_customer_id")

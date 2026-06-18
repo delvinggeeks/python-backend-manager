@@ -1,0 +1,295 @@
+"""ONE shared PaymentsPort contract both adapters must satisfy — so they can't drift.
+
+Mirrors the StatePort contract pattern: a single parametrized ``case`` fixture yields the
+SAME assertions against every adapter (Stripe + Razorpay), each wired to a FAKE SDK client —
+no live calls. If a future adapter (or an edit to an existing one) violates the port shape or
+the normalized mapping, every leg here fails identically. Adapter-specific edge cases live in
+their own tests below; the Razorpay leg additionally proves the REAL HMAC-SHA256 signature
+scheme (using the real ``razorpay`` SDK, still offline).
+
+Requires the `db` + `users` + `payments` extras. mypy does not type-check tests, so the fakes
+stay light (``SimpleNamespace``).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import uuid
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+import pytest
+import razorpay
+import stripe
+from razorpay.errors import SignatureVerificationError as RzpSigError
+
+from app.billing.adapters import RazorpayAdapter, StripeAdapter
+from app.billing.ports import (
+    EVENT_SUBSCRIPTION_CREATED,
+    PaymentEvent,
+    PaymentsPort,
+    SubscriptionState,
+    WebhookVerificationError,
+    to_naive_utc,
+)
+from app.core.config import Settings
+
+# The one signature value every fake treats as valid; anything else is "forged".
+_GOOD_SIG = "good-signature"
+_STRIPE_CUSTOMER = "cus_stripe_1"
+_RZP_CUSTOMER = "cust_rzp_1"
+_PERIOD_END = 1900000000
+
+# Canonical provider webhook bodies + the normalized PaymentEvent each must map onto.
+_STRIPE_EVENT = {
+    "id": "evt_stripe_1",
+    "type": "customer.subscription.created",
+    "data": {
+        "object": {
+            "id": "sub_stripe_1",
+            "customer": _STRIPE_CUSTOMER,
+            "status": "active",
+            "current_period_end": _PERIOD_END,
+            "items": {"data": [{"price": {"id": "price_pro"}}]},
+        }
+    },
+}
+_STRIPE_SUB = {
+    "id": "sub_stripe_1",
+    "status": "active",
+    "current_period_end": _PERIOD_END,
+    "items": {"data": [{"price": {"id": "price_pro"}}]},
+}
+_RZP_EVENT = {
+    "event": "subscription.activated",
+    "created_at": 1700000000,
+    "payload": {
+        "subscription": {
+            "entity": {
+                "id": "sub_rzp_1",
+                "plan_id": "plan_pro",
+                "status": "active",
+                "current_end": _PERIOD_END,
+                "customer_id": _RZP_CUSTOMER,
+            }
+        }
+    },
+}
+_RZP_SUB = {
+    "id": "sub_rzp_1",
+    "status": "active",
+    "plan_id": "plan_pro",
+    "current_end": _PERIOD_END,
+}
+
+
+class _Account:
+    """A minimal mutable ``BillingAccount`` — the adapter reads id/name and writes the id."""
+
+    def __init__(self) -> None:
+        self.id = uuid.uuid4()
+        self.name = "Acme"
+        self.payments_customer_id: str | None = None
+
+
+@dataclass
+class _Case:
+    name: str
+    adapter: PaymentsPort
+    good_body: bytes
+    expected_event: PaymentEvent
+    checkout_url: str
+    customer_id: str
+    expected_state: SubscriptionState
+
+
+def _fake_stripe(*, event: dict, subscriptions: list[dict]) -> SimpleNamespace:
+    """The slice of the ``stripe`` module the adapter touches — accepts only ``_GOOD_SIG``."""
+
+    def construct_event(raw_body: bytes, signature: str, secret: str) -> dict:
+        if signature != _GOOD_SIG:
+            raise stripe.SignatureVerificationError("bad signature", signature)
+        return event
+
+    return SimpleNamespace(
+        api_key=None,
+        Customer=SimpleNamespace(create=lambda *, name, metadata: {"id": _STRIPE_CUSTOMER}),
+        checkout=SimpleNamespace(
+            Session=SimpleNamespace(
+                create=lambda **kw: {"id": "cs_1", "url": "https://stripe.test/checkout"}
+            )
+        ),
+        billing_portal=SimpleNamespace(
+            Session=SimpleNamespace(create=lambda **kw: {"url": "https://stripe.test/portal"})
+        ),
+        Webhook=SimpleNamespace(construct_event=construct_event),
+        Subscription=SimpleNamespace(
+            list=lambda *, customer, limit: {"data": list(subscriptions)},
+            cancel=lambda sub_id: None,
+        ),
+    )
+
+
+def _fake_razorpay(*, subscriptions: list[dict]) -> SimpleNamespace:
+    """The slice of the ``razorpay`` client the adapter touches — accepts only ``_GOOD_SIG``."""
+
+    def verify(body: str, signature: str, secret: str) -> bool:
+        if signature != _GOOD_SIG:
+            raise RzpSigError("bad signature")
+        return True
+
+    return SimpleNamespace(
+        utility=SimpleNamespace(verify_webhook_signature=verify),
+        customer=SimpleNamespace(create=lambda body: {"id": _RZP_CUSTOMER}),
+        subscription=SimpleNamespace(
+            create=lambda body: {"short_url": "https://rzp.test/checkout"},
+            all=lambda body: {"items": list(subscriptions)},
+            cancel=lambda sub_id: None,
+        ),
+    )
+
+
+def _build_case(provider: str) -> _Case:
+    expected_state = SubscriptionState(
+        subscription_id="sub_stripe_1" if provider == "stripe" else "sub_rzp_1",
+        status="active",
+        plan="pro",
+        period_end=to_naive_utc(_PERIOD_END),
+    )
+    if provider == "stripe":
+        settings = Settings(
+            payments_provider="stripe",
+            stripe_secret_key="sk_test",
+            stripe_webhook_secret="whsec_test",
+            stripe_plan_to_price={"pro": "price_pro"},
+        )
+        adapter = StripeAdapter(
+            stripe_module=_fake_stripe(event=_STRIPE_EVENT, subscriptions=[_STRIPE_SUB]),
+            settings=settings,
+        )
+        return _Case(
+            name="stripe",
+            adapter=adapter,
+            good_body=json.dumps(_STRIPE_EVENT).encode(),
+            expected_event=PaymentEvent(
+                event_id="evt_stripe_1",
+                event_type=EVENT_SUBSCRIPTION_CREATED,
+                subscription_id="sub_stripe_1",
+                status="active",
+                plan="pro",
+                period_end=to_naive_utc(_PERIOD_END),
+                customer_ref=_STRIPE_CUSTOMER,
+            ),
+            checkout_url="https://stripe.test/checkout",
+            customer_id=_STRIPE_CUSTOMER,
+            expected_state=expected_state,
+        )
+    settings = Settings(
+        payments_provider="razorpay",
+        razorpay_key_id="rzp_key",
+        razorpay_key_secret="rzp_secret",
+        razorpay_webhook_secret="whsec_rzp",
+        razorpay_plan_to_plan_id={"pro": "plan_pro"},
+    )
+    adapter = RazorpayAdapter(client=_fake_razorpay(subscriptions=[_RZP_SUB]), settings=settings)
+    return _Case(
+        name="razorpay",
+        adapter=adapter,
+        good_body=json.dumps(_RZP_EVENT).encode(),
+        expected_event=PaymentEvent(
+            event_id="subscription.activated:sub_rzp_1:1700000000",
+            event_type=EVENT_SUBSCRIPTION_CREATED,
+            subscription_id="sub_rzp_1",
+            status="active",
+            plan="pro",
+            period_end=to_naive_utc(_PERIOD_END),
+            customer_ref=_RZP_CUSTOMER,
+        ),
+        checkout_url="https://rzp.test/checkout",
+        customer_id=_RZP_CUSTOMER,
+        expected_state=expected_state,
+    )
+
+
+@pytest.fixture(params=["stripe", "razorpay"])
+def case(request: pytest.FixtureRequest) -> _Case:
+    # A fresh adapter + fake per test, so no state leaks between the two legs.
+    return _build_case(request.param)
+
+
+# --- The shared contract: identical assertions for BOTH adapters ----------------------------
+def test_adapter_satisfies_payments_port(case: _Case) -> None:
+    # runtime_checkable structural check: every required member is present.
+    assert isinstance(case.adapter, PaymentsPort)
+
+
+def test_provider_identity_is_set(case: _Case) -> None:
+    assert isinstance(case.adapter.name, str)
+    assert case.adapter.name
+    assert isinstance(case.adapter.signature_header, str)
+    assert case.adapter.signature_header
+
+
+def test_verify_webhook_maps_to_normalized_event(case: _Case) -> None:
+    event = case.adapter.verify_webhook(case.good_body, _GOOD_SIG)
+    assert event == case.expected_event
+
+
+def test_verify_webhook_bad_signature_raises(case: _Case) -> None:
+    with pytest.raises(WebhookVerificationError):
+        case.adapter.verify_webhook(case.good_body, "forged")
+
+
+async def test_start_checkout_returns_url_and_creates_customer(case: _Case) -> None:
+    account = _Account()
+    url = await case.adapter.start_checkout(account, "pro")
+    assert url == case.checkout_url
+    # The provider customer is created lazily and stamped onto the account.
+    assert account.payments_customer_id == case.customer_id
+
+
+async def test_get_subscription_returns_normalized_state(case: _Case) -> None:
+    account = _Account()
+    account.payments_customer_id = case.customer_id
+    state = await case.adapter.get_subscription(account)
+    assert state == case.expected_state
+
+
+async def test_get_subscription_without_customer_is_none(case: _Case) -> None:
+    state = await case.adapter.get_subscription(_Account())
+    assert state is None
+
+
+async def test_cancel_without_subscription_is_noop(case: _Case) -> None:
+    # No provider customer -> nothing to cancel; must not raise.
+    await case.adapter.cancel(_Account())
+
+
+# --- Razorpay-specific: the REAL HMAC-SHA256 signature scheme (still offline) ----------------
+async def test_razorpay_real_hmac_signature_is_verified() -> None:
+    secret = "whsec_rzp_real"
+    settings = Settings(
+        payments_provider="razorpay",
+        razorpay_key_id="rzp_key",
+        razorpay_key_secret="rzp_secret",
+        razorpay_webhook_secret=secret,
+        razorpay_plan_to_plan_id={"pro": "plan_pro"},
+    )
+    # The REAL razorpay SDK client — utility.verify_webhook_signature is pure HMAC, no network.
+    adapter = RazorpayAdapter(
+        client=razorpay.Client(auth=("rzp_key", "rzp_secret")), settings=settings
+    )
+    body = json.dumps(_RZP_EVENT).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    event = adapter.verify_webhook(body, signature)
+    assert event.event_type == EVENT_SUBSCRIPTION_CREATED
+    assert event.subscription_id == "sub_rzp_1"
+    assert event.plan == "pro"
+    assert event.customer_ref == _RZP_CUSTOMER
+
+    # A tampered signature is rejected via the same provider-neutral error.
+    with pytest.raises(WebhookVerificationError):
+        adapter.verify_webhook(body, "deadbeef")

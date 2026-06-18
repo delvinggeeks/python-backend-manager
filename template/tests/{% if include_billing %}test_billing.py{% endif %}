@@ -1,47 +1,102 @@
-"""Billing & entitlements flow — requires the `db` + `users` + `payments` extras.
+"""Billing & entitlements flow (provider-agnostic) — requires `db` + `users` + `payments`.
 
-Proves the security + correctness contract without any live Stripe calls: a forged webhook
-signature is rejected with 400; a replayed event is an idempotent no-op; `require_feature`
-blocks on the free plan and allows on the right plan; and checkout lazily creates the org's
-Stripe customer. The Stripe SDK is mocked at the `app.billing.client` seam. Runs against the
-throwaway SQLite database from `conftest.pytest_configure`, so it needs no external Postgres.
+Proves the security + correctness contract without any live provider calls, against a FAKE
+``PaymentsPort`` injected via ``app.dependency_overrides[get_payments_provider]`` (the
+conftest ``client`` fixture doesn't expose the app, so these build their own). The router and
+webhook handler are exercised entirely through the port: a forged webhook signature is
+rejected with 400; a replayed event is an idempotent no-op (deduped by ``(provider,
+event_id)``); ``require_feature`` blocks on the free plan and allows on the right plan;
+checkout lazily creates the org's provider customer; and cancel reaches the port. Per-adapter
+mapping is covered in ``test_payments_contract.py``. Runs against the throwaway SQLite db from
+``conftest.pytest_configure``, so it needs no external Postgres.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
-from app.billing.client import WebhookVerificationError
-from app.billing.models import ProcessedStripeEvent, Subscription
+from app.billing.models import ProcessedEvent, Subscription
+from app.billing.ports import (
+    EVENT_SUBSCRIPTION_CREATED,
+    BillingAccount,
+    PaymentEvent,
+    PaymentsPort,
+    SubscriptionState,
+    WebhookVerificationError,
+)
 from app.db.models import Base
 from app.db.session import SessionFactory, engine
 from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
 from app.users.models import User  # noqa: F401  (registers the `user` table on Base)
 
-# A Stripe customer id we wire onto an org so webhook syncing can find it.
+# A provider customer id we wire onto an org so webhook syncing can find it.
 _CUSTOMER_ID = "cus_test_123"
 
 
-def _subscription_event() -> dict[str, Any]:
-    """A minimal `customer.subscription.created` event for `_CUSTOMER_ID`."""
-    return {
-        "id": "evt_test_123",
-        "type": "customer.subscription.created",
-        "data": {
-            "object": {
-                "id": "sub_test_123",
-                "customer": _CUSTOMER_ID,
-                "status": "active",
-                "current_period_end": 1900000000,
-                "items": {"data": [{"price": {"id": "price_test"}}]},
-            }
-        },
-    }
+class _FakePort:
+    """An in-memory ``PaymentsPort`` — no SDK, no network. Records what the router asked it."""
+
+    name = "fake"
+    signature_header = "x-fake-signature"
+
+    def __init__(self, *, event: PaymentEvent | None = None, bad_signature: bool = False) -> None:
+        self._event = event
+        self._bad_signature = bad_signature
+        self.canceled = False
+
+    async def start_checkout(self, account: BillingAccount, plan: str) -> str:
+        # Exercise the lazy-customer-creation path the router then commits.
+        if account.payments_customer_id is None:
+            account.payments_customer_id = _CUSTOMER_ID
+        return "https://pay.test/checkout"
+
+    async def open_customer_portal(self, account: BillingAccount) -> str:
+        return "https://pay.test/portal"
+
+    def verify_webhook(self, raw_body: bytes, signature: str) -> PaymentEvent:
+        if self._bad_signature:
+            raise WebhookVerificationError("bad signature")
+        assert self._event is not None
+        return self._event
+
+    async def get_subscription(self, account: BillingAccount) -> SubscriptionState | None:
+        return None
+
+    async def cancel(self, account: BillingAccount) -> None:
+        self.canceled = True
+
+
+@asynccontextmanager
+async def _client_with(port: PaymentsPort) -> AsyncIterator[AsyncClient]:
+    """An AsyncClient whose app uses ``port`` as the active payments provider."""
+    # Imported lazily so DATABASE_URL (set in pytest_configure) is in place first.
+    from app.billing.provider import get_payments_provider
+    from app.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_payments_provider] = lambda: port
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+def _subscription_event() -> PaymentEvent:
+    """A minimal normalized subscription.created event for ``_CUSTOMER_ID``."""
+    return PaymentEvent(
+        event_id="evt_test_123",
+        event_type=EVENT_SUBSCRIPTION_CREATED,
+        subscription_id="sub_test_123",
+        status="active",
+        plan="pro",
+        period_end=None,
+        customer_ref=_CUSTOMER_ID,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +128,7 @@ async def _set_customer_id(org_id: str, customer_id: str) -> None:
     async with SessionFactory() as session:
         org = await session.get(Organization, uuid.UUID(org_id))
         assert org is not None
-        org.stripe_customer_id = customer_id
+        org.payments_customer_id = customer_id
         await session.commit()
 
 
@@ -83,102 +138,103 @@ async def _count(model: type) -> int:
         return int(result.scalar_one())
 
 
-async def test_bad_webhook_signature_returns_400(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def _raise(payload: bytes, signature: str) -> dict[str, Any]:
-        raise WebhookVerificationError("bad signature")
-
-    # Force signature verification to fail, exactly as a forged event would.
-    monkeypatch.setattr("app.billing.client.construct_event", _raise)
-    r = await client.post(
-        "/billing/webhook", content=b"{}", headers={"stripe-signature": "t=1,v1=forged"}
-    )
+async def test_bad_webhook_signature_returns_400() -> None:
+    port = _FakePort(bad_signature=True)
+    async with _client_with(port) as http:
+        # Force signature verification to fail, exactly as a forged event would.
+        r = await http.post(
+            "/billing/webhook",
+            content=b"{}",
+            headers={port.signature_header: "forged"},
+        )
     assert r.status_code == 400, r.text
 
 
-async def test_duplicate_event_is_idempotent_noop(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
-    auth = {"Authorization": f"Bearer {token}"}
-    org_id = await _make_org(client, auth)
-    await _set_customer_id(org_id, _CUSTOMER_ID)
+async def test_duplicate_event_is_idempotent_noop() -> None:
+    port = _FakePort(event=_subscription_event())
+    async with _client_with(port) as http:
+        _, token = await _register_and_login(http, "owner@example.com", "s3cret-passw0rd")
+        auth = {"Authorization": f"Bearer {token}"}
+        org_id = await _make_org(http, auth)
+        await _set_customer_id(org_id, _CUSTOMER_ID)
 
-    event = _subscription_event()
+        headers = {port.signature_header: "valid"}
 
-    def _return_event(payload: bytes, signature: str) -> dict[str, Any]:
-        return event
+        # First delivery handles the event and creates exactly one subscription.
+        r = await http.post("/billing/webhook", content=b"{}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "ok"
 
-    monkeypatch.setattr("app.billing.client.construct_event", _return_event)
-    headers = {"stripe-signature": "valid"}
+        # Re-delivering the same event id is a no-op — nothing is created twice.
+        r = await http.post("/billing/webhook", content=b"{}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "duplicate"
 
-    # First delivery handles the event and creates exactly one subscription.
-    r = await client.post("/billing/webhook", content=b"{}", headers=headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "ok"
-
-    # Re-delivering the same event id is a no-op — nothing is created twice.
-    r = await client.post("/billing/webhook", content=b"{}", headers=headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "duplicate"
-
-    assert await _count(ProcessedStripeEvent) == 1
+    assert await _count(ProcessedEvent) == 1
     assert await _count(Subscription) == 1
 
 
-async def test_require_feature_blocks_on_free_and_allows_on_paid(client: AsyncClient) -> None:
-    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
-    auth = {"Authorization": f"Bearer {token}"}
-    org_id = await _make_org(client, auth)
+async def test_require_feature_blocks_on_free_and_allows_on_paid() -> None:
+    port = _FakePort()
+    async with _client_with(port) as http:
+        _, token = await _register_and_login(http, "owner@example.com", "s3cret-passw0rd")
+        auth = {"Authorization": f"Bearer {token}"}
+        org_id = await _make_org(http, auth)
 
-    # No subscription -> free plan -> the advanced_analytics route is forbidden.
-    r = await client.get(f"/orgs/{org_id}/billing/usage", headers=auth)
-    assert r.status_code == 403, r.text
+        # No subscription -> free plan -> the advanced_analytics route is forbidden.
+        r = await http.get(f"/orgs/{org_id}/billing/usage", headers=auth)
+        assert r.status_code == 403, r.text
 
-    # Grant an active 'pro' subscription, which includes advanced_analytics.
-    async with SessionFactory() as session:
-        session.add(
-            Subscription(
-                organization_id=uuid.UUID(org_id),
-                stripe_subscription_id="sub_pro_1",
-                status="active",
-                plan="pro",
+        # Grant an active 'pro' subscription, which includes advanced_analytics.
+        async with SessionFactory() as session:
+            session.add(
+                Subscription(
+                    organization_id=uuid.UUID(org_id),
+                    provider="fake",
+                    provider_subscription_id="sub_pro_1",
+                    status="active",
+                    plan="pro",
+                )
             )
+            await session.commit()
+
+        r = await http.get(f"/orgs/{org_id}/billing/usage", headers=auth)
+        assert r.status_code == 200, r.text
+        assert r.json()["feature"] == "advanced_analytics"
+
+
+async def test_checkout_session_creates_customer() -> None:
+    port = _FakePort()
+    async with _client_with(port) as http:
+        _, token = await _register_and_login(http, "owner@example.com", "s3cret-passw0rd")
+        auth = {"Authorization": f"Bearer {token}"}
+        org_id = await _make_org(http, auth)
+
+        r = await http.post(
+            f"/orgs/{org_id}/billing/checkout-session",
+            json={"plan": "pro"},
+            headers=auth,
         )
-        await session.commit()
-
-    r = await client.get(f"/orgs/{org_id}/billing/usage", headers=auth)
     assert r.status_code == 200, r.text
-    assert r.json()["feature"] == "advanced_analytics"
+    body = r.json()
+    assert body["url"] == "https://pay.test/checkout"
+    assert body["provider"] == "fake"
 
-
-async def test_checkout_session_creates_customer(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
-    auth = {"Authorization": f"Bearer {token}"}
-    org_id = await _make_org(client, auth)
-
-    def _fake_customer(*, name: str, organization_id: str) -> str:
-        return _CUSTOMER_ID
-
-    def _fake_checkout(*, customer_id: str, price_id: str) -> dict[str, str]:
-        return {"id": "cs_test_1", "url": "https://stripe.test/checkout"}
-
-    monkeypatch.setattr("app.billing.client.create_customer", _fake_customer)
-    monkeypatch.setattr("app.billing.client.create_checkout_session", _fake_checkout)
-
-    r = await client.post(
-        f"/orgs/{org_id}/billing/checkout-session",
-        json={"price_id": "price_test"},
-        headers=auth,
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["url"] == "https://stripe.test/checkout"
-
-    # The org's Stripe customer was created lazily and persisted.
+    # The org's provider customer was created lazily and persisted (the router commits it).
     async with SessionFactory() as session:
         org = await session.get(Organization, uuid.UUID(org_id))
         assert org is not None
-        assert org.stripe_customer_id == _CUSTOMER_ID
+        assert org.payments_customer_id == _CUSTOMER_ID
+
+
+async def test_cancel_subscription_reaches_provider() -> None:
+    port = _FakePort()
+    async with _client_with(port) as http:
+        _, token = await _register_and_login(http, "owner@example.com", "s3cret-passw0rd")
+        auth = {"Authorization": f"Bearer {token}"}
+        org_id = await _make_org(http, auth)
+
+        r = await http.request("DELETE", f"/orgs/{org_id}/billing/subscription", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "canceled"
+    assert port.canceled is True
