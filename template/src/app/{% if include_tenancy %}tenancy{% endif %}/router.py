@@ -1,0 +1,135 @@
+"""The ``/orgs`` router: organizations + memberships (multi-tenancy).
+
+Every route requires an authenticated user; the member-scoped routes additionally require
+the caller to belong to the organization (via ``get_current_membership``). This is the
+example surface a permissions layer protects with per-role rules.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session
+from app.tenancy.dependencies import get_current_membership
+from app.tenancy.models import OWNER, Membership, Organization
+from app.tenancy.schemas import (
+    MemberAdd,
+    MembershipRead,
+    OrganizationCreate,
+    OrganizationRead,
+)
+from app.users import current_active_user
+from app.users.models import User
+
+router = APIRouter()
+
+
+@router.post("", response_model=OrganizationRead, status_code=status.HTTP_201_CREATED)
+async def create_organization(
+    payload: OrganizationCreate,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> Organization:
+    """Create an organization; the caller becomes its owner."""
+    org = Organization(name=payload.name, slug=payload.slug)
+    session.add(org)
+    session.add(Membership(organization=org, user_id=user.id, role=OWNER))
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Organization slug already taken",
+        ) from exc
+    await session.refresh(org)
+    return org
+
+
+@router.get("", response_model=list[OrganizationRead])
+async def list_my_organizations(
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[Organization]:
+    """List the organizations the caller belongs to."""
+    result = await session.execute(
+        select(Organization)
+        .join(Membership, Membership.organization_id == Organization.id)
+        .where(Membership.user_id == user.id)
+        .order_by(Organization.created_at)
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/{org_id}/members", response_model=list[MembershipRead])
+async def list_members(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> list[Membership]:
+    """List the members of an organization the caller belongs to."""
+    result = await session.execute(
+        select(Membership)
+        .where(Membership.organization_id == org_id)
+        .order_by(Membership.created_at)
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{org_id}/members",
+    response_model=MembershipRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_member(
+    org_id: uuid.UUID,
+    payload: MemberAdd,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Membership:
+    """Add a user to the organization."""
+    new_membership = Membership(
+        organization_id=org_id,
+        user_id=payload.user_id,
+        role=payload.role,
+    )
+    session.add(new_membership)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User is already a member of this organization",
+        ) from exc
+    await session.refresh(new_membership)
+    return new_membership
+
+
+@router.delete("/{org_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Remove a user from the organization."""
+    result = await session.execute(
+        select(Membership).where(
+            Membership.organization_id == org_id,
+            Membership.user_id == user_id,
+        )
+    )
+    target = result.scalar_one_or_none()
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
+        )
+    await session.delete(target)
+    await session.commit()

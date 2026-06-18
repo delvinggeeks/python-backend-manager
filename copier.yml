@@ -113,6 +113,14 @@ include_users:
     users extras.
   default: false
 
+include_tenancy:
+  type: bool
+  help: >-
+    Scaffold multi-tenancy (organizations + memberships): an `/orgs` router, the
+    Organization + Membership models with a per-membership role, and a migration.
+    Implies the users capability (and therefore the db + users extras).
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -149,7 +157,7 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

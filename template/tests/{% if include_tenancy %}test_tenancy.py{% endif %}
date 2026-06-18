@@ -1,0 +1,70 @@
+"""End-to-end multi-tenancy flow — requires the `db` + `users` extras.
+
+Registers two users, has one create an organization (becoming its owner), then adds the
+second as a member and lists members. Runs against the throwaway SQLite database from
+`conftest.pytest_configure`, so it needs no external Postgres.
+"""
+
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+
+from app.db.models import Base
+from app.db.session import engine
+from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
+from app.users.models import User  # noqa: F401  (registers the `user` table on Base)
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _register_and_login(client: AsyncClient, email: str, password: str) -> tuple[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    user_id = r.json()["id"]
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return user_id, r.json()["access_token"]
+
+
+async def test_org_lifecycle(client: AsyncClient) -> None:
+    _, owner_token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    member_id, _ = await _register_and_login(client, "member@example.com", "s3cret-passw0rd")
+    owner_auth = {"Authorization": f"Bearer {owner_token}"}
+
+    # Owner creates an org and becomes its owner.
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=owner_auth)
+    assert r.status_code == 201, r.text
+    org_id = r.json()["id"]
+
+    # It shows up in the owner's org list.
+    r = await client.get("/orgs", headers=owner_auth)
+    assert r.status_code == 200
+    assert [o["slug"] for o in r.json()] == ["acme"]
+
+    # Owner adds the second user as a member.
+    r = await client.post(
+        f"/orgs/{org_id}/members",
+        json={"user_id": member_id, "role": "member"},
+        headers=owner_auth,
+    )
+    assert r.status_code == 201, r.text
+
+    # The members list now has both, with their roles.
+    r = await client.get(f"/orgs/{org_id}/members", headers=owner_auth)
+    assert r.status_code == 200
+    roles = {m["user_id"]: m["role"] for m in r.json()}
+    assert roles[member_id] == "member"
+    assert "owner" in roles.values()
+
+    # An unauthenticated caller cannot see the members.
+    r = await client.get(f"/orgs/{org_id}/members")
+    assert r.status_code == 401

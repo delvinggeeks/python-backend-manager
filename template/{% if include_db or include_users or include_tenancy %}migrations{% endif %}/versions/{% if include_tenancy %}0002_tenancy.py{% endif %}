@@ -1,0 +1,58 @@
+"""tenancy schema (organizations + memberships)
+
+Revision ID: 0002_tenancy
+Revises: 0001_initial_schema
+Create Date: ships with the template (include_tenancy)
+
+"""
+
+from collections.abc import Sequence
+
+import fastapi_users_db_sqlalchemy.generics
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0002_tenancy"
+down_revision: str | Sequence[str] | None = "0001_initial_schema"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "organizations",
+        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("slug", sa.String(length=255), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_organizations_slug"), "organizations", ["slug"], unique=True)
+    op.create_table(
+        "memberships",
+        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("organization_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("role", sa.String(length=50), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("organization_id", "user_id", name="uq_membership_org_user"),
+    )
+    op.create_index(
+        op.f("ix_memberships_organization_id"),
+        "memberships",
+        ["organization_id"],
+        unique=False,
+    )
+    op.create_index(op.f("ix_memberships_user_id"), "memberships", ["user_id"], unique=False)
+
+
+def downgrade() -> None:
+    op.drop_index(op.f("ix_memberships_user_id"), table_name="memberships")
+    op.drop_index(op.f("ix_memberships_organization_id"), table_name="memberships")
+    op.drop_table("memberships")
+    op.drop_index(op.f("ix_organizations_slug"), table_name="organizations")
+    op.drop_table("organizations")
