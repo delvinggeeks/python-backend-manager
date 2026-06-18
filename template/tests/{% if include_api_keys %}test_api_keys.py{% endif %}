@@ -1,0 +1,156 @@
+"""End-to-end API-key flow — requires the `db` + `users` extras.
+
+Proves the security contract: an API key authenticates a protected route just like a JWT;
+revoked and expired keys are rejected; and the raw secret is returned only once at creation
+and is never persisted in plaintext. Runs against the throwaway SQLite database from
+`conftest.pytest_configure`, so it needs no external Postgres.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import timedelta
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
+
+from app.api_keys.models import ApiKey
+from app.api_keys.security import generate_key, hash_secret, utcnow
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
+from app.users.models import User  # noqa: F401  (registers the `user` table on Base)
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _register_and_login(client: AsyncClient, email: str, password: str) -> tuple[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    user_id = r.json()["id"]
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return user_id, r.json()["access_token"]
+
+
+async def _make_org(client: AsyncClient, auth: dict[str, str]) -> str:
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def test_api_key_authenticates_and_lists_without_secret(client: AsyncClient) -> None:
+    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    auth = {"Authorization": f"Bearer {token}"}
+    org_id = await _make_org(client, auth)
+
+    # Mint a key — the full secret is returned exactly once, here.
+    r = await client.post(
+        f"/orgs/{org_id}/api-keys",
+        json={"name": "ci-bot", "scopes": ["items:read"], "expires_in_days": 30},
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+    full_key = created["key"]
+    assert full_key.startswith(created["prefix"] + ".")
+    assert created["scopes"] == ["items:read"]
+
+    # Listing returns prefixes only — never the secret or the full key.
+    r = await client.get(f"/orgs/{org_id}/api-keys", headers=auth)
+    assert r.status_code == 200, r.text
+    listed = r.json()
+    assert [k["prefix"] for k in listed] == [created["prefix"]]
+    assert all("key" not in k for k in listed)
+
+    # The key authenticates the protected /whoami route and binds the org.
+    r = await client.get("/whoami", headers={"X-API-Key": full_key})
+    assert r.status_code == 200, r.text
+    principal = r.json()
+    assert principal["auth_method"] == "api_key"
+    assert principal["organization_id"] == org_id
+    assert principal["api_key_id"] == created["id"]
+    assert principal["scopes"] == ["items:read"]
+
+    # The same route also accepts a user JWT.
+    r = await client.get("/whoami", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["auth_method"] == "jwt"
+
+    # No credentials at all is a 401.
+    r = await client.get("/whoami")
+    assert r.status_code == 401
+
+
+async def test_revoked_key_is_rejected(client: AsyncClient) -> None:
+    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    auth = {"Authorization": f"Bearer {token}"}
+    org_id = await _make_org(client, auth)
+
+    r = await client.post(f"/orgs/{org_id}/api-keys", json={"name": "to-revoke"}, headers=auth)
+    assert r.status_code == 201, r.text
+    created = r.json()
+    full_key = created["key"]
+
+    # It works until revoked.
+    r = await client.get("/whoami", headers={"X-API-Key": full_key})
+    assert r.status_code == 200, r.text
+
+    r = await client.delete(f"/orgs/{org_id}/api-keys/{created['id']}", headers=auth)
+    assert r.status_code == 204, r.text
+
+    # After revocation the same key is rejected.
+    r = await client.get("/whoami", headers={"X-API-Key": full_key})
+    assert r.status_code == 401
+
+
+async def test_expired_key_is_rejected(client: AsyncClient) -> None:
+    user_id, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    auth = {"Authorization": f"Bearer {token}"}
+    org_id = await _make_org(client, auth)
+
+    # Insert an already-expired key directly — deterministic, no time travel.
+    full_key, prefix, hashed = generate_key()
+    async with SessionFactory() as session:
+        session.add(
+            ApiKey(
+                organization_id=uuid.UUID(org_id),
+                created_by_user_id=uuid.UUID(user_id),
+                name="expired",
+                prefix=prefix,
+                hashed_secret=hashed,
+                expires_at=utcnow() - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    r = await client.get("/whoami", headers={"X-API-Key": full_key})
+    assert r.status_code == 401
+
+
+async def test_secret_is_never_persisted_in_plaintext(client: AsyncClient) -> None:
+    _, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    auth = {"Authorization": f"Bearer {token}"}
+    org_id = await _make_org(client, auth)
+
+    r = await client.post(f"/orgs/{org_id}/api-keys", json={"name": "secret-check"}, headers=auth)
+    assert r.status_code == 201, r.text
+    created = r.json()
+    secret = created["key"].split(".", 1)[1]
+
+    async with SessionFactory() as session:
+        result = await session.execute(select(ApiKey).where(ApiKey.prefix == created["prefix"]))
+        row = result.scalar_one()
+
+    # Only the hash is stored — the row holds the SHA-256 digest, not the raw secret.
+    assert row.hashed_secret != secret
+    assert row.hashed_secret == hash_secret(secret)

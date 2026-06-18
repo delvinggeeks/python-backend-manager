@@ -1,0 +1,85 @@
+"""Combined JWT-or-API-key authentication. Requires the `db` + `users` extras.
+
+``get_principal`` resolves the caller from EITHER an ``X-API-Key`` header OR a logged-in
+user (JWT bearer). For an API key it looks the row up by prefix, verifies the secret hash
+in constant time, rejects revoked or expired keys, stamps ``last_used_at``, and binds the
+key's organization. With no usable credentials it raises 401.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api_keys.models import ApiKey
+from app.api_keys.security import split_key, utcnow, verify_secret
+from app.db.session import get_session
+from app.users import fastapi_users
+from app.users.models import User
+
+# Like ``current_active_user`` but returns ``None`` instead of raising 401 when no JWT is
+# present, so we can fall back to API-key authentication.
+current_active_user_optional = fastapi_users.current_user(active=True, optional=True)
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+@dataclass
+class Principal:
+    """The resolved caller — a human (JWT) or a service token (API key)."""
+
+    user_id: uuid.UUID
+    organization_id: uuid.UUID | None
+    api_key_id: uuid.UUID | None
+    scopes: list[str] = field(default_factory=list)
+    method: str = "jwt"
+
+
+async def get_principal(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    user: User | None = Depends(current_active_user_optional),
+    session: AsyncSession = Depends(get_session),
+) -> Principal:
+    """Authenticate via an API key (preferred when present) or a user JWT, else 401."""
+    if x_api_key:
+        parts = split_key(x_api_key)
+        if parts is None:
+            raise _unauthorized()
+        prefix, secret = parts
+        result = await session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
+        api_key = result.scalar_one_or_none()
+        if api_key is None or not verify_secret(secret, api_key.hashed_secret):
+            raise _unauthorized()
+        now = utcnow()
+        if api_key.revoked_at is not None:
+            raise _unauthorized()
+        if api_key.expires_at is not None and api_key.expires_at <= now:
+            raise _unauthorized()
+        api_key.last_used_at = now
+        await session.commit()
+        return Principal(
+            user_id=api_key.created_by_user_id,
+            organization_id=api_key.organization_id,
+            api_key_id=api_key.id,
+            scopes=api_key.scopes.split() if api_key.scopes else [],
+            method="api_key",
+        )
+    if user is not None:
+        return Principal(
+            user_id=user.id,
+            organization_id=None,
+            api_key_id=None,
+            scopes=[],
+            method="jwt",
+        )
+    raise _unauthorized()

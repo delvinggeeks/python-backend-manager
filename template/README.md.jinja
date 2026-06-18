@@ -53,7 +53,7 @@ src/app/
 tests/
 ```
 
-{% if include_tenancy or include_rbac %}
+{% if include_tenancy or include_rbac or include_api_keys %}
 ## Organizations (multi-tenancy)
 
 This service is multi-tenant: every authenticated user can create **organizations** and
@@ -87,7 +87,27 @@ member requires the `members:write` scope, so a plain `member` is denied both.
 
 {% endif %}
 {% endif %}
-{% if include_db or include_users or include_tenancy or include_rbac %}
+{% if include_api_keys %}
+## API keys / service tokens
+
+Machine clients authenticate with **API keys** instead of a user JWT. A key is created
+inside an org and is shown **once** at creation; only a SHA-256 hash of the secret is
+stored (the plaintext `prefix` is kept for lookup and display).
+
+```text
+POST   /orgs/{org_id}/api-keys        mint a key (returns the full secret ONCE)
+GET    /orgs/{org_id}/api-keys        list this org's keys (prefixes only, never the secret)
+DELETE /orgs/{org_id}/api-keys/{id}   revoke a key
+GET    /whoami                        resolve the caller (accepts a JWT OR an API key)
+```
+
+Pass a key as the `X-API-Key` header. The `get_principal` dependency in
+`app.api_keys.dependencies` accepts **either** a logged-in user (JWT) **or** a valid API
+key — it looks the key up by prefix, verifies the hash in constant time, rejects revoked
+or expired keys, stamps `last_used_at`, and binds the acting identity + org.
+
+{% endif %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys %}
 ## Migrations (Alembic)
 
 Schema changes are managed with Alembic. `migrations/env.py` reads `DATABASE_URL` from
@@ -99,7 +119,7 @@ just migration "describe the change"   # alembic revision --autogenerate -m ...
 just migrate                           # alembic upgrade head
 ```
 
-{% if include_tenancy or include_rbac %}Initial migrations for the `items` + `user` tables and the
+{% if include_tenancy or include_rbac or include_api_keys %}Initial migrations for the `items` + `user` tables and the
 `organizations` + `memberships` tables ship in `migrations/versions/` — run `just migrate`
 to create them.{% elif include_users %}An initial migration for the `items` + `user` tables ships in
 `migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`
