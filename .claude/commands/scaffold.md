@@ -4,6 +4,8 @@ argument-hint: <service-name> [agent_framework] [--no-db]
 allowed-tools: Bash(uvx copier:*), Bash(git:*), Bash(uv:*), Bash(just:*), Read, Glob
 model: claude-sonnet-4-6
 ---
+Example: `/scaffold billing-svc pydantic-ai`  ·  `/scaffold worker-svc none --no-db`
+
 Scaffold a new service from this template. Arguments: $ARGUMENTS
 - $1 = service name (kebab-case, required)
 - $2 = agent framework: pydantic-ai | langgraph | openai-agents | none (default pydantic-ai)

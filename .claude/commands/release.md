@@ -4,6 +4,8 @@ argument-hint: <feat|fix|chore> "<summary>"
 allowed-tools: Bash(git:*), Bash(uvx:*), Bash(uv:*), Read, Glob, Grep
 model: claude-sonnet-4-6
 ---
+Example: `/release feat "expand SaaS extras"`  ·  `/release fix "pin asyncpg"`
+
 Prepare a release of the TEMPLATE. Arguments: $ARGUMENTS ($1 = type, rest = summary).
 
 1. First run `/validate` (or the template-validator) and refuse to proceed if anything fails.

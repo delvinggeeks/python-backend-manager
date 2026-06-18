@@ -58,6 +58,19 @@ tests/
 `just setup` · `just run` · `just test` · `just fmt` · `just check` ·
 `just upgrade` (libs) · `just template-update` (template) · `just docker-up`
 
+## Working with Claude
+
+This service is born Claude-ready. `AGENTS.md` holds the conventions and decision
+rules; `CLAUDE.md` just `@AGENTS.md`-imports them and lists the command/subagent
+surface. Drive it with:
+
+- `/feature "<what to build>"` — implement a feature end-to-end, then self-review.
+- `/check` — run every gate (ruff + mypy + pytest).
+
+Two guardrails run automatically: a PreToolUse hook **blocks `pip install`** (use
+`uv add`), and a PostToolUse hook ruff-formats Python on save. The `code-reviewer`
+and `build-judge` subagents are read-only — you own edits and commits.
+
 ## Notes
 - Type checking is `mypy`; switch to Astral's `ty` once it's 1.0:
   `uv remove --dev mypy && uv add --dev ty --prerelease allow`.

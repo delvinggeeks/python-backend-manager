@@ -4,6 +4,8 @@ argument-hint: "<what to build>"
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(uv:*), Bash(just:*)
 model: claude-sonnet-4-6
 ---
+Example: `/feature "add a GET /healthz/db endpoint that pings Postgres"`
+
 Implement: $ARGUMENTS
 
 1. Plan briefly: which files under `src/app/` change, and the new test under `tests/`.

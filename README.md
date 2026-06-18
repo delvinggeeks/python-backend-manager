@@ -91,18 +91,36 @@ the template itself.
 
 This repo is operated by Claude Code at two levels:
 
-- **Manager** (repo root): `CLAUDE.md` + `.claude/` with subagents
-  (`template-validator`, `build-judge`, `dependency-auditor`, `docs-researcher`),
-  slash commands (`/scaffold`, `/validate`, `/audit-deps`, `/release`), permission
-  rules, and a ruff-format hook. Subagents are read-only analysts; the parent owns edits.
-- **Service body** (`template/.claude/` + `template/CLAUDE.md.jinja`): renders into
-  every generated service so it's born agent-ready — `code-reviewer` + `build-judge`
-  subagents, `/check` + `/feature` commands, settings, and the same hook.
+- **Manager** (repo root): `AGENTS.md` (canonical conventions) + a thin `CLAUDE.md`
+  that imports it, plus `.claude/` with subagents (`template-validator`, `build-judge`,
+  `dependency-auditor`, `docs-researcher`), slash commands (`/scaffold`, `/validate`,
+  `/audit-deps`, `/release`), permission rules, and two hooks (no-pip + ruff-format).
+  Subagents are read-only analysts; the parent owns edits.
+- **Service body** (`template/.claude/` + `template/AGENTS.md` + `template/CLAUDE.md.jinja`):
+  renders into every generated service so it's born agent-ready — its own `AGENTS.md`
+  SoT, `code-reviewer` + `build-judge` subagents, `/check` + `/feature` commands,
+  settings, and the same two hooks.
+
+## Working with Claude
+
+`AGENTS.md` is the single source of truth for conventions and decision rules;
+`CLAUDE.md` just `@AGENTS.md`-imports it and lists the Claude-Code surface (which
+commands and subagents exist). Drive the repo through its verb-first slash commands:
+
+- `/scaffold <name> [framework] [--no-db]` — generate a service into a sibling dir.
+- `/validate` — run the full CI gate locally across the matrix before pushing.
+- `/audit-deps` — audit dependency freshness + risk (AI stack first).
+- `/release <feat|fix|chore> "<summary>"` — validate, then prepare a release.
+
+Two guardrails run automatically: a PreToolUse hook **blocks `pip install`** (use
+`uv add`), and a PostToolUse hook ruff-formats Python on save. Subagents are
+read-only analysts; the parent session owns all edits, commits, and pushes.
 
 ## Repo structure
 
 ```
-CLAUDE.md                  # operating manual for Claude Code (manager scope)
+AGENTS.md                  # canonical conventions + decision rules (SoT)
+CLAUDE.md                  # thin @AGENTS.md import + Claude-Code command/subagent map
 .claude/                   # manager subagents, commands, settings, hooks
 copier.yml                 # questions + computed extras + update settings
 renovate.json              # auto-maintenance of THIS repo
