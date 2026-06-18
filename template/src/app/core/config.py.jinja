@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     model_fast: str = "claude-haiku-4-5-20251001"
     model_default: str = "claude-sonnet-4-6"
     model_frontier: str = "claude-opus-4-8"
+{% if include_users %}
+
+    # --- Users / auth (only used if the `users` extra is installed) ---
+    #     Override USERS_JWT_SECRET in every non-local environment (>=32 bytes).
+    users_jwt_secret: str = "CHANGE_ME_dev_only_secret_override_in_prod"
+    users_jwt_lifetime_seconds: int = 3600
+{% endif %}
 
     @property
     def is_production(self) -> bool:

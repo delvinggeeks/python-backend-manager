@@ -47,6 +47,28 @@ def create_app() -> FastAPI:
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
 {% endif %}
+{% if include_users %}
+    # Imported here, not at module top, so `app.main` can be imported without a
+    # configured DATABASE_URL — the user-DB engine is built when the app is created.
+    from app.users import auth_backend, fastapi_users
+    from app.users.schemas import UserCreate, UserRead, UserUpdate
+
+    app.include_router(
+        fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"]
+    )
+    app.include_router(
+        fastapi_users.get_register_router(UserRead, UserCreate),
+        prefix="/auth",
+        tags=["auth"],
+    )
+    app.include_router(fastapi_users.get_reset_password_router(), prefix="/auth", tags=["auth"])
+    app.include_router(fastapi_users.get_verify_router(UserRead), prefix="/auth", tags=["auth"])
+    app.include_router(
+        fastapi_users.get_users_router(UserRead, UserUpdate),
+        prefix="/users",
+        tags=["users"],
+    )
+{% endif %}
     return app
 
 
