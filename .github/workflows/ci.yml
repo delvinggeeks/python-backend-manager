@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 0   # copier reads git history/refs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           # renovate: datasource=github-releases depName=astral-sh/uv
@@ -115,7 +115,7 @@ jobs:
           fetch-depth: 0   # copier reads git history/refs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           # renovate: datasource=github-releases depName=astral-sh/uv
@@ -151,7 +151,7 @@ jobs:
           fetch-depth: 0   # copier reads git history/refs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           # renovate: datasource=github-releases depName=astral-sh/uv
@@ -186,7 +186,7 @@ jobs:
           fetch-depth: 0   # copier reads git history/refs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           # renovate: datasource=github-releases depName=astral-sh/uv
@@ -221,7 +221,7 @@ jobs:
           fetch-depth: 0   # copier reads git history/refs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           # renovate: datasource=github-releases depName=astral-sh/uv
