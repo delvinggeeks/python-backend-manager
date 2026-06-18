@@ -53,7 +53,7 @@ src/app/
 tests/
 ```
 
-{% if include_tenancy or include_rbac or include_api_keys %}
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
 ## Organizations (multi-tenancy)
 
 This service is multi-tenant: every authenticated user can create **organizations** and
@@ -107,7 +107,30 @@ key — it looks the key up by prefix, verifies the hash in constant time, rejec
 or expired keys, stamps `last_used_at`, and binds the acting identity + org.
 
 {% endif %}
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys %}
+{% if include_billing %}
+## Billing & entitlements (Stripe)
+
+Each organization is a **Stripe customer** (`organizations.stripe_customer_id`, created
+lazily on first checkout/portal access). Plans map to features via `app.billing.entitlements`,
+and a `require_feature(...)` dependency gates routes on the org's current plan.
+
+```text
+POST /orgs/{org_id}/billing/checkout-session   start a Stripe Checkout (returns a URL)
+POST /orgs/{org_id}/billing/portal-session     open the Stripe customer portal (returns a URL)
+GET  /orgs/{org_id}/billing/subscription       the org's synced subscription (status/plan/period)
+GET  /orgs/{org_id}/billing/usage              example route gated by require_feature(...)
+POST /billing/webhook                           Stripe events (signature-verified, idempotent)
+```
+
+The org-scoped routes reuse the tenancy membership dependency. The webhook verifies the
+Stripe **signature** (rejecting forgeries with `400`) and **dedupes** replayed events by
+id, then syncs a `Subscription` row (status / plan / period) from
+`customer.subscription.*` events. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+`STRIPE_DEFAULT_PRICE_ID`, and `STRIPE_PRICE_TO_PLAN` in your environment — **test-mode keys
+only**, never hard-coded.
+
+{% endif %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}
 ## Migrations (Alembic)
 
 Schema changes are managed with Alembic. `migrations/env.py` reads `DATABASE_URL` from
@@ -119,7 +142,7 @@ just migration "describe the change"   # alembic revision --autogenerate -m ...
 just migrate                           # alembic upgrade head
 ```
 
-{% if include_tenancy or include_rbac or include_api_keys %}Initial migrations for the `items` + `user` tables and the
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}Initial migrations for the `items` + `user` tables and the
 `organizations` + `memberships` tables ship in `migrations/versions/` — run `just migrate`
 to create them.{% elif include_users %}An initial migration for the `items` + `user` tables ships in
 `migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`

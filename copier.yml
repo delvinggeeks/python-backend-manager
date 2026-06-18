@@ -139,6 +139,17 @@ include_api_keys:
     key, and a migration. Implies the tenancy capability (and therefore its users + db).
   default: false
 
+include_billing:
+  type: bool
+  help: >-
+    Scaffold billing & entitlements (Stripe): a Stripe customer per organization,
+    `/orgs/{org_id}/billing` create-checkout-session + customer-portal routers, a
+    signature-verified webhook with idempotent (deduped) event handling, a Subscription
+    model synced from webhook events, an entitlements map with a `require_feature(...)`
+    dependency applied to an example route, and a migration. Implies the tenancy
+    capability (and therefore its users + db) plus the `payments` (stripe) extra.
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -175,7 +186,8 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy or include_rbac or include_api_keys %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}
