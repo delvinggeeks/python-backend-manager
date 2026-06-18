@@ -50,17 +50,35 @@ class Settings(BaseSettings):
 {% endif %}
 {% if include_billing %}
 
-    # --- Billing / Stripe (only used if the `payments` extra is installed) ---
-    #     TEST-MODE keys only here; set real keys per environment via env vars, never
-    #     hard-coded. `stripe_price_to_plan` maps each Stripe Price id to an internal
-    #     entitlements plan key (see app.billing.entitlements).
+    # --- Billing / payments (only used if the `payments` extra is installed) ---
+    #     The active provider is swappable: `payments_provider` selects which adapter
+    #     `app.billing.provider` returns; the rest of the app speaks only PaymentsPort.
+    #     Override PAYMENTS_PROVIDER per environment to switch (default ships as below).
+    payments_provider: Literal["stripe", "razorpay"] = "{{ payments_provider }}"
+    # Internal entitlements plan a checkout subscribes to when the request omits one.
+    payments_default_plan: str = "pro"
+    # Provider-agnostic redirect targets for hosted checkout / portal returns.
+    payments_success_url: str = "http://localhost:8000/billing/success"
+    payments_cancel_url: str = "http://localhost:8000/billing/cancel"
+    payments_portal_return_url: str = "http://localhost:8000/billing"
+
+    # Stripe (used when payments_provider == "stripe"). TEST-MODE keys only here; set real
+    # keys per environment via env vars. `stripe_plan_to_price` maps each INTERNAL plan key
+    # to a Stripe Price id (inverted for webhook price -> plan).
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
-    stripe_default_price_id: str | None = None
-    stripe_success_url: str = "http://localhost:8000/billing/success"
-    stripe_cancel_url: str = "http://localhost:8000/billing/cancel"
-    stripe_portal_return_url: str = "http://localhost:8000/billing"
-    stripe_price_to_plan: dict[str, str] = Field(default_factory=dict)
+    stripe_plan_to_price: dict[str, str] = Field(default_factory=dict)
+
+    # Razorpay (used when payments_provider == "razorpay"; India-first). `razorpay_plan_to_
+    # plan_id` maps each INTERNAL plan key to a Razorpay Plan id. Razorpay has no hosted
+    # portal, so `razorpay_portal_url` is where customers manage their subscription.
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
+    razorpay_portal_url: str = "http://localhost:8000/billing"
+    razorpay_plan_to_plan_id: dict[str, str] = Field(default_factory=dict)
+    # Number of billing cycles a Razorpay subscription runs for (required by its API).
+    razorpay_total_count: int = 12
 {% endif %}
 {% if include_storage %}
 

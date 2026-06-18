@@ -1,16 +1,17 @@
 """Plan -> feature entitlements. Pure and dependency-free, so it is trivial to unit-test.
 
-A subscription's ``plan`` (resolved from its Stripe Price via ``settings.stripe_price_to_plan``)
-maps here to a frozenset of feature flags. ``require_feature(...)`` in
+A subscription's ``plan`` (an INTERNAL plan key the active provider's adapter resolves from
+its own price/plan id) maps here to a frozenset of feature flags. ``require_feature(...)`` in
 ``app.billing.dependencies`` turns these into route guards. An org with no *active*
-subscription falls back to ``FREE_PLAN``'s entitlements.
+subscription falls back to ``FREE_PLAN``'s entitlements. This layer is provider-agnostic — it
+never sees a Stripe/Razorpay id.
 """
 
 from __future__ import annotations
 
-# Internal plan keys. Stripe Price ids are mapped onto these via
-# ``settings.stripe_price_to_plan``, so SKUs/pricing can change in Stripe without touching
-# the entitlements logic.
+# Internal plan keys. Each provider's adapter maps its own price/plan ids onto these (via
+# ``settings.stripe_plan_to_price`` / ``settings.razorpay_plan_to_plan_id``), so SKUs/pricing
+# can change with the provider without touching the entitlements logic.
 FREE_PLAN = "free"
 PRO_PLAN = "pro"
 ENTERPRISE_PLAN = "enterprise"
