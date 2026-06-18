@@ -35,7 +35,7 @@ jobs:
           uv run pytest
 
       - name: Open pull request with the upgrade
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "chore(deps): weekly uv lock --upgrade"
           branch: chore/deps-upgrade

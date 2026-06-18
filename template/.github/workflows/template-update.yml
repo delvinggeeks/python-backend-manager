@@ -35,7 +35,7 @@ jobs:
           uvx copier update --defaults --skip-answered --trust || true
 
       - name: Open PR if the template changed anything
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "chore(template): copier update to latest version"
           branch: chore/template-update
