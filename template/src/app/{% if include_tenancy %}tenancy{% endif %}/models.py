@@ -10,6 +10,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+# Load fastapi_users.db before the adapter's `generics` submodule: it re-exports
+# its SQLAlchemy types inside a try/except, and importing `generics` first triggers
+# a circular init that silently drops them (breaking app.users.models elsewhere).
+import fastapi_users.db  # noqa: F401  (import-ordering guard — see comment above)
 from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
