@@ -104,9 +104,44 @@ jobs:
           uv run mypy src
           uv run pytest
 
+  generate-tenancy:
+    name: "generate (tenancy + db + users)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # copier reads git history/refs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.11.x"
+
+      - name: Generate a multi-tenancy project from the current commit
+        run: |
+          uvx copier copy --defaults --trust --vcs-ref HEAD \
+            --data agent_framework=none \
+            --data include_tenancy=true \
+            . /tmp/generated
+
+      - name: Lock, sync, lint, test the generated project
+        working-directory: /tmp/generated
+        run: |
+          set -euo pipefail
+          git init -q && git add -A
+          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
+          uv lock
+          uv sync --extra db --extra users
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest
+
   release:
     name: Tag + release
-    needs: [generate-and-test, generate-users]
+    needs: [generate-and-test, generate-users, generate-tenancy]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
