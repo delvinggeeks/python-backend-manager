@@ -3,6 +3,7 @@
   "extends": ["config:recommended", ":dependencyDashboard", "schedule:weekly"],
   "timezone": "Asia/Kolkata",
   "labels": ["maintenance"],
+  "automerge": true,
   "platformAutomerge": true,
   "pre-commit": { "enabled": true },
   "customManagers": [
@@ -17,16 +18,9 @@
   ],
   "packageRules": [
     {
-      "description": "Auto-merge GitHub Actions + pre-commit hook bumps after CI passes.",
+      "description": "Auto-merge every GitHub Actions + pre-commit bump (incl. majors) once the required CI checks pass — the workflow-render gate in .github/workflows/ci.yml makes green real for the template body.",
       "matchManagers": ["github-actions", "pre-commit"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
-    },
-    {
-      "description": "Major bumps always reviewed.",
-      "matchUpdateTypes": ["major"],
-      "automerge": false,
-      "labels": ["major-update"]
     }
   ]
 }

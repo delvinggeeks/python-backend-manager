@@ -49,6 +49,44 @@ jobs:
             --data include_db=${{ matrix.include_db }} \
             . /tmp/generated
 
+      - name: Render-gate the generated GitHub workflows
+        # Makes "green" real for the template BODY. These matrix legs are the repo's
+        # REQUIRED checks, so embedding the parse here means a Renovate bump to an action
+        # (checkout / setup-uv / create-pull-request / action-gh-release) inside
+        # template/.github/workflows/ cannot go green unless it actually renders into
+        # structurally-valid workflow YAML — which is what makes auto-merging action
+        # majors safe. A pure copier render + Python lint/test would never load these files.
+        working-directory: /tmp/generated
+        run: |
+          set -euo pipefail
+          uv run --no-project --with pyyaml -- python - <<'PY'
+          import glob
+          import sys
+
+          import yaml
+
+          files = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+          if not files:
+              sys.exit("FAIL: no .github/workflows/* rendered into the generated service")
+          for path in files:
+              try:
+                  with open(path) as fh:
+                      doc = yaml.safe_load(fh)
+              except yaml.YAMLError as exc:
+                  sys.exit(f"FAIL: {path}: invalid YAML: {exc}")
+              if not isinstance(doc, dict):
+                  sys.exit(f"FAIL: {path}: not a YAML mapping")
+              jobs = doc.get("jobs")
+              if not isinstance(jobs, dict) or not jobs:
+                  sys.exit(f"FAIL: {path}: missing or empty 'jobs' block")
+              for name, job in jobs.items():
+                  steps = job.get("steps")
+                  if steps is not None and not isinstance(steps, list):
+                      sys.exit(f"FAIL: {path}: job '{name}' has a malformed 'steps' list")
+              print(f"ok: {path} ({len(jobs)} job(s))")
+          print(f"render-gate parsed {len(files)} rendered workflow file(s)")
+          PY
+
       - name: Lock, sync, lint, test the generated project
         working-directory: /tmp/generated
         run: |
