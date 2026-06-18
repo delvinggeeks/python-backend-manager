@@ -1,0 +1,16 @@
+# Ruff config for the MANAGER repo (this repo is a Copier template, not a service).
+#
+# Its only job: make the PostToolUse format hook (.claude/hooks/ruff-format.sh, which
+# runs `ruff format <file>`) use the SAME line length the generated service uses, so it
+# stops over-wrapping code that the service's `ruff format --check` then rejects at 100.
+# The template's body sets `line-length = 100` (template/pyproject.toml.jinja); mirror it
+# here, plus the same docstring formatting, so the hook leaves already-100-col template
+# .py untouched.
+#
+# This file lives at the repo ROOT (outside template/), so it is never rendered into a
+# generated service and never affects CI — CI lints the rendered project with the
+# service's own pyproject.
+line-length = 100
+
+[format]
+docstring-code-format = true
