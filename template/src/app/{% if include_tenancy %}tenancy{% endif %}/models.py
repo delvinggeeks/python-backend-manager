@@ -1,0 +1,56 @@
+"""Tenancy models: organizations and memberships. Requires the `db` + `users` extras.
+
+Each ``Membership`` joins a ``User`` (the ``user`` table from ``app.users.models``) to an
+``Organization`` and carries a ``role`` string. Both tables are mapped onto the shared
+``Base`` from ``app.db.models`` so a single ``Base.metadata`` covers the whole service.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from fastapi_users_db_sqlalchemy.generics import GUID
+from sqlalchemy import ForeignKey, String, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.models import Base
+
+# Conventional membership roles. The column is a free string, so this set is a
+# convention an enforcement layer can extend — not a database constraint.
+OWNER = "owner"
+ADMIN = "admin"
+MEMBER = "member"
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    memberships: Mapped[list[Membership]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="uq_membership_org_user"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(50), default=MEMBER)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    organization: Mapped[Organization] = relationship(back_populates="memberships")

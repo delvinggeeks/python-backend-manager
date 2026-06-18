@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
 {% endif %}
-{% if include_users %}
+{% if include_users or include_tenancy %}
     # Imported here, not at module top, so `app.main` can be imported without a
     # configured DATABASE_URL — the user-DB engine is built when the app is created.
     from app.users import auth_backend, fastapi_users
@@ -68,6 +68,11 @@ def create_app() -> FastAPI:
         prefix="/users",
         tags=["users"],
     )
+{% endif %}
+{% if include_tenancy %}
+    from app.tenancy.router import router as tenancy_router
+
+    app.include_router(tenancy_router, prefix="/orgs", tags=["organizations"])
 {% endif %}
     return app
 
