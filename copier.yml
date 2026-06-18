@@ -150,6 +150,16 @@ include_billing:
     capability (and therefore its users + db) plus the `payments` (stripe) extra.
   default: false
 
+include_storage:
+  type: bool
+  help: >-
+    Scaffold S3-compatible object storage (aioboto3): an `app/storage` package with a
+    settings-driven async S3 client (works with AWS or any S3-compatible endpoint —
+    MinIO, R2, ...), upload / download / delete / presigned-URL helpers, and a `/storage`
+    router. Keys are tenant-prefixed under `/orgs/{org_id}/storage` when tenancy is on,
+    plain otherwise. Implies the `storage` extra (aioboto3); no database required.
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -188,6 +198,7 @@ sync_extras:
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
     {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
+    {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

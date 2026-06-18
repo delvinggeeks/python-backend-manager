@@ -88,6 +88,16 @@ def create_app() -> FastAPI:
     app.include_router(billing_router, prefix="/orgs", tags=["billing"])
     app.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])
 {% endif %}
+{% if include_storage %}
+    from app.storage.router import router as storage_router
+
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
+    # Org-scoped: keys are tenant-prefixed and routes reuse the membership dependency.
+    app.include_router(storage_router, prefix="/orgs", tags=["storage"])
+{% else %}
+    app.include_router(storage_router, prefix="/storage", tags=["storage"])
+{% endif %}
+{% endif %}
     return app
 
 

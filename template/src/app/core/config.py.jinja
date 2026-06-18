@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     stripe_portal_return_url: str = "http://localhost:8000/billing"
     stripe_price_to_plan: dict[str, str] = Field(default_factory=dict)
 {% endif %}
+{% if include_storage %}
+
+    # --- Object storage (S3-compatible; only used if the `storage` extra is installed) ---
+    #     Works with AWS S3 or any S3-compatible endpoint (MinIO, R2, ...). Set credentials
+    #     per environment via env vars, never hard-coded; leave `s3_endpoint_url=None` for AWS.
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_region: str = "us-east-1"
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    s3_presign_expiry_seconds: int = 3600
+{% endif %}
 
     @property
     def is_production(self) -> bool:
