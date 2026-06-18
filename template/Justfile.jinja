@@ -45,7 +45,7 @@ docker-build:
 
 docker-up:
     docker compose up --build
-{% if include_db or include_users %}
+{% if include_db or include_users or include_api_keys %}
 
 # Database migrations (Alembic) — DB-backed services only.
 # New migration from model changes, e.g. `just migration "add user table"`

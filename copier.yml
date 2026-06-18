@@ -130,6 +130,15 @@ include_rbac:
     to the `/orgs` member routes. Implies the tenancy capability (and its users + db).
   default: false
 
+include_api_keys:
+  type: bool
+  help: >-
+    Scaffold hashed API keys / service tokens (org-scoped): an `ApiKey` model (plaintext
+    prefix for lookup + a SHA-256 hash of the secret), `/orgs/{org_id}/api-keys`
+    create / list / revoke routers, an auth dependency accepting EITHER a JWT OR an API
+    key, and a migration. Implies the tenancy capability (and therefore its users + db).
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -166,7 +175,7 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy or include_rbac %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac or include_api_keys %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}
