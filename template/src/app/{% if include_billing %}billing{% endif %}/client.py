@@ -62,7 +62,11 @@ def construct_event(payload: bytes, signature: str) -> dict[str, Any]:
     """
     secret = get_settings().stripe_webhook_secret or ""
     try:
-        event: dict[str, Any] = stripe.Webhook.construct_event(payload, signature, secret)
+        # stripe ships partial types; construct_event is unannotated, so strict mypy sees
+        # an untyped call. We assert the well-documented dict shape instead.
+        event: dict[str, Any] = stripe.Webhook.construct_event(  # type: ignore[no-untyped-call]
+            payload, signature, secret
+        )
     except (ValueError, stripe.SignatureVerificationError) as exc:
         raise WebhookVerificationError(str(exc)) from exc
     return event
