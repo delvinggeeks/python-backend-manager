@@ -129,7 +129,6 @@ saas_extras:
     - scheduler
     - api
     - rag
-    - mcp
 
 automerge_safe_updates:
   type: bool
