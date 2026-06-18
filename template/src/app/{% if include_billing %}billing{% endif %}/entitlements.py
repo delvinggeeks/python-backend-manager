@@ -22,7 +22,9 @@ ACTIVE_STATUSES = frozenset({"active", "trialing"})
 FEATURES_BY_PLAN: dict[str, frozenset[str]] = {
     FREE_PLAN: frozenset({"core"}),
     PRO_PLAN: frozenset({"core", "advanced_analytics"}),
-    ENTERPRISE_PLAN: frozenset({"core", "advanced_analytics", "priority_support", "sso"}),
+    ENTERPRISE_PLAN: frozenset(
+        {"core", "advanced_analytics", "priority_support", "sso"}
+    ),
 }
 
 
@@ -34,3 +36,9 @@ def features_for_plan(plan: str | None) -> frozenset[str]:
 def plan_has_feature(plan: str | None, feature: str) -> bool:
     """True iff ``plan`` grants ``feature``."""
     return feature in features_for_plan(plan)
+
+
+def _ci_gate_proof_deliberate_type_error() -> int:
+    # DELIBERATE mypy error to prove the capability gate blocks auto-merge. This file is
+    # gated behind include_billing, so ONLY the billing capability leg should go red.
+    return "not an int"
