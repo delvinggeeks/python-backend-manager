@@ -53,7 +53,7 @@ src/app/
 tests/
 ```
 
-{% if include_tenancy %}
+{% if include_tenancy or include_rbac %}
 ## Organizations (multi-tenancy)
 
 This service is multi-tenant: every authenticated user can create **organizations** and
@@ -73,7 +73,7 @@ The `Organization` and `Membership` models live in `app.tenancy.models`; the per
 a permissions layer.
 
 {% endif %}
-{% if include_db or include_users or include_tenancy %}
+{% if include_db or include_users or include_tenancy or include_rbac %}
 ## Migrations (Alembic)
 
 Schema changes are managed with Alembic. `migrations/env.py` reads `DATABASE_URL` from
@@ -85,7 +85,7 @@ just migration "describe the change"   # alembic revision --autogenerate -m ...
 just migrate                           # alembic upgrade head
 ```
 
-{% if include_tenancy %}Initial migrations for the `items` + `user` tables and the
+{% if include_tenancy or include_rbac %}Initial migrations for the `items` + `user` tables and the
 `organizations` + `memberships` tables ship in `migrations/versions/` — run `just migrate`
 to create them.{% elif include_users %}An initial migration for the `items` + `user` tables ships in
 `migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`
