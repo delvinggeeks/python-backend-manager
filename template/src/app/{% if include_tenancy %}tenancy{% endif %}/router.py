@@ -94,7 +94,9 @@ async def add_member(
 ) -> Membership:
     """Add a user to the organization."""
     new_membership = Membership(
-        organization_id=org_id, user_id=payload.user_id, role=payload.role
+        organization_id=org_id,
+        user_id=payload.user_id,
+        role=payload.role,
     )
     session.add(new_membership)
     try:
@@ -126,7 +128,8 @@ async def remove_member(
     target = result.scalar_one_or_none()
     if target is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Member not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
         )
     await session.delete(target)
     await session.commit()
