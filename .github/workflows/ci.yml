@@ -31,7 +31,7 @@ jobs:
           - { agent_framework: langgraph,     include_db: "false" }
           - { agent_framework: openai-agents, include_db: "false" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # copier reads git history/refs
 
@@ -110,7 +110,7 @@ jobs:
     name: "generate (users + db)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # copier reads git history/refs
 
@@ -146,7 +146,7 @@ jobs:
     name: "generate (tenancy + db + users)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # copier reads git history/refs
 
@@ -181,7 +181,7 @@ jobs:
     name: "generate (rbac + tenancy + db + users)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # copier reads git history/refs
 
@@ -216,7 +216,7 @@ jobs:
     name: "generate (api-keys + tenancy + db + users)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # copier reads git history/refs
 
@@ -253,7 +253,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
