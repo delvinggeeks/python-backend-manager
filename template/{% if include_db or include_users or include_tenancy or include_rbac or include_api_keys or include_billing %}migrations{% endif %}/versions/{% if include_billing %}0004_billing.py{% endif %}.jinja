@@ -1,0 +1,74 @@
+"""billing schema (subscriptions + processed events + org stripe_customer_id)
+
+Revision ID: 0004_billing
+Revises: {% if include_api_keys %}0003_api_keys{% else %}0002_tenancy{% endif %}
+
+Create Date: ships with the template (include_billing)
+
+"""
+
+from collections.abc import Sequence
+
+import fastapi_users_db_sqlalchemy.generics
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0004_billing"
+down_revision: str | Sequence[str] | None = "{% if include_api_keys %}0003_api_keys{% else %}0002_tenancy{% endif %}"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    # Stripe customer id lives on the organizations table (one customer per org).
+    op.add_column(
+        "organizations",
+        sa.Column("stripe_customer_id", sa.String(length=255), nullable=True),
+    )
+    op.create_index(
+        op.f("ix_organizations_stripe_customer_id"),
+        "organizations",
+        ["stripe_customer_id"],
+        unique=True,
+    )
+    op.create_table(
+        "subscriptions",
+        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("organization_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("stripe_subscription_id", sa.String(length=255), nullable=False),
+        sa.Column("status", sa.String(length=50), nullable=False),
+        sa.Column("plan", sa.String(length=50), nullable=False),
+        sa.Column("current_period_end", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_subscriptions_organization_id"),
+        "subscriptions",
+        ["organization_id"],
+        unique=True,
+    )
+    op.create_index(
+        op.f("ix_subscriptions_stripe_subscription_id"),
+        "subscriptions",
+        ["stripe_subscription_id"],
+        unique=True,
+    )
+    op.create_table(
+        "processed_stripe_events",
+        sa.Column("id", sa.String(length=255), nullable=False),
+        sa.Column("type", sa.String(length=100), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+
+
+def downgrade() -> None:
+    op.drop_table("processed_stripe_events")
+    op.drop_index(op.f("ix_subscriptions_stripe_subscription_id"), table_name="subscriptions")
+    op.drop_index(op.f("ix_subscriptions_organization_id"), table_name="subscriptions")
+    op.drop_table("subscriptions")
+    op.drop_index(op.f("ix_organizations_stripe_customer_id"), table_name="organizations")
+    op.drop_column("organizations", "stripe_customer_id")

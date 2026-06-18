@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
 {% endif %}
-{% if include_users or include_tenancy or include_rbac or include_api_keys %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}
     # Imported here, not at module top, so `app.main` can be imported without a
     # configured DATABASE_URL — the user-DB engine is built when the app is created.
     from app.users import auth_backend, fastapi_users
@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
         tags=["users"],
     )
 {% endif %}
-{% if include_tenancy or include_rbac or include_api_keys %}
+{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
     from app.tenancy.router import router as tenancy_router
 
     app.include_router(tenancy_router, prefix="/orgs", tags=["organizations"])
@@ -80,6 +80,13 @@ def create_app() -> FastAPI:
 
     app.include_router(api_keys_router, prefix="/orgs", tags=["api-keys"])
     app.include_router(identity_router, tags=["identity"])
+{% endif %}
+{% if include_billing %}
+    from app.billing.router import router as billing_router
+    from app.billing.router import webhook_router as billing_webhook_router
+
+    app.include_router(billing_router, prefix="/orgs", tags=["billing"])
+    app.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])
 {% endif %}
     return app
 
