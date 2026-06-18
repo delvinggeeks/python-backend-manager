@@ -106,9 +106,22 @@ jobs:
           uv run mypy src
           uv run pytest
 
-  generate-users:
-    name: "generate (users + db)"
+  generate-capability:
+    name: "generate (${{ matrix.capability }})"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each capability implies db + users (billing additionally needs payments).
+          # `data` is the copier toggle; `extras` the uv extras to sync. Add a row to
+          # cover a future module and the "generate (capability)" gate below aggregates
+          # it automatically — branch protection never has to change.
+          - { capability: users,    data: "--data include_users=true",    extras: "--extra db --extra users" }
+          - { capability: tenancy,  data: "--data include_tenancy=true",  extras: "--extra db --extra users" }
+          - { capability: rbac,     data: "--data include_rbac=true",     extras: "--extra db --extra users" }
+          - { capability: api_keys, data: "--data include_api_keys=true", extras: "--extra db --extra users" }
+          - { capability: billing,  data: "--data include_billing=true",  extras: "--extra db --extra users --extra payments" }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -121,170 +134,52 @@ jobs:
           # renovate: datasource=github-releases depName=astral-sh/uv
           version: "0.11.x"
 
-      - name: Generate a users/auth project from the current commit
+      - name: Generate a ${{ matrix.capability }} project from the current commit
         run: |
           uvx copier copy --defaults --trust --vcs-ref HEAD \
             --data agent_framework=none \
-            --data include_db=true \
-            --data include_users=true \
+            ${{ matrix.data }} \
             . /tmp/generated
 
-      - name: Lock, sync, lint, test the generated project
+      - name: Lock, sync, lint, test + alembic round-trip
         working-directory: /tmp/generated
         run: |
           set -euo pipefail
           git init -q && git add -A
           git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
           uv lock
-          uv sync --extra db --extra users
+          uv sync ${{ matrix.extras }}
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy src
           uv run pytest
+          # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
+          export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
+          uv run alembic upgrade head
+          uv run alembic downgrade base
 
-  generate-tenancy:
-    name: "generate (tenancy + db + users)"
+  # Single STABLE required status check that gates auto-merge on the whole capability
+  # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
+  # covered automatically and branch protection never has to change.
+  generate-capability-gate:
+    name: "generate (capability)"
+    needs: [generate-capability]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # copier reads git history/refs
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-          # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.11.x"
-
-      - name: Generate a multi-tenancy project from the current commit
+      - name: Require every capability leg to have passed
         run: |
-          uvx copier copy --defaults --trust --vcs-ref HEAD \
-            --data agent_framework=none \
-            --data include_tenancy=true \
-            . /tmp/generated
-
-      - name: Lock, sync, lint, test the generated project
-        working-directory: /tmp/generated
-        run: |
-          set -euo pipefail
-          git init -q && git add -A
-          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
-          uv lock
-          uv sync --extra db --extra users
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run pytest
-
-  generate-rbac:
-    name: "generate (rbac + tenancy + db + users)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # copier reads git history/refs
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-          # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.11.x"
-
-      - name: Generate an RBAC project from the current commit
-        run: |
-          uvx copier copy --defaults --trust --vcs-ref HEAD \
-            --data agent_framework=none \
-            --data include_rbac=true \
-            . /tmp/generated
-
-      - name: Lock, sync, lint, test the generated project
-        working-directory: /tmp/generated
-        run: |
-          set -euo pipefail
-          git init -q && git add -A
-          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
-          uv lock
-          uv sync --extra db --extra users
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run pytest
-
-  generate-api-keys:
-    name: "generate (api-keys + tenancy + db + users)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # copier reads git history/refs
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-          # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.11.x"
-
-      - name: Generate an API-keys project from the current commit
-        run: |
-          uvx copier copy --defaults --trust --vcs-ref HEAD \
-            --data agent_framework=none \
-            --data include_api_keys=true \
-            . /tmp/generated
-
-      - name: Lock, sync, lint, test the generated project
-        working-directory: /tmp/generated
-        run: |
-          set -euo pipefail
-          git init -q && git add -A
-          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
-          uv lock
-          uv sync --extra db --extra users
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run pytest
-
-  generate-billing:
-    name: "generate (billing + tenancy + db + users)"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # copier reads git history/refs
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-          # renovate: datasource=github-releases depName=astral-sh/uv
-          version: "0.11.x"
-
-      - name: Generate a billing project from the current commit
-        run: |
-          uvx copier copy --defaults --trust --vcs-ref HEAD \
-            --data agent_framework=none \
-            --data include_billing=true \
-            . /tmp/generated
-
-      - name: Lock, sync, lint, test the generated project
-        working-directory: /tmp/generated
-        run: |
-          set -euo pipefail
-          git init -q && git add -A
-          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
-          uv lock
-          uv sync --extra db --extra users --extra payments
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run pytest
+          result="${{ needs.generate-capability.result }}"
+          echo "capability matrix result: $result"
+          if [ "$result" != "success" ]; then
+            echo "::error::one or more capability legs failed — blocking the gate"
+            exit 1
+          fi
+          echo "all capability legs passed"
 
   release:
     name: Tag + release
-    needs: [generate-and-test, generate-users, generate-tenancy, generate-rbac, generate-api-keys, generate-billing]
+    needs: [generate-and-test, generate-capability]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
