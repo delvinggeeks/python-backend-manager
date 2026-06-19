@@ -46,11 +46,11 @@ async def _check_database() -> bool:
 async def _check_redis() -> bool:
     """True when Redis answers a PING."""
     try:
-        from redis.asyncio import from_url
+        from redis.asyncio import Redis
 
         from app.core.config import get_settings
 
-        redis = from_url(get_settings().redis_url or "redis://localhost:6379")
+        redis = Redis.from_url(get_settings().redis_url or "redis://localhost:6379")
         try:
             await redis.ping()
         finally:
