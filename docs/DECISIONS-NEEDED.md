@@ -97,7 +97,55 @@ MIT core) or a **cloud secret manager** (AWS/GCP)?
 
 ---
 
+## AI-native layer decisions (Wave 5 — see [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md))
+
+## D9 · LLM gateway posture  ⭐ (AI unit-economics)
+**Question:** default `LLMPort` = **LiteLLM SDK in-process** (+ prompt/semantic caching + token→
+`MeteringPort`), with the LiteLLM **proxy**/Portkey as a later seam?
+- **Recommended default:** **yes — SDK in-process now** (no separate tier; metering + caching owned),
+  proxy/Portkey only when >100 tenants need central governance.
+- **Why:** the product is usage-priced → metering is the core and must be owned; a standalone gateway
+  adds ~$1.7k/mo ops at small scale for no benefit. Caching (prompt + semantic) is the biggest cost
+  lever (70-95%).
+- **Need from you:** ✅ confirm SDK-first + caching, or "run a gateway from day one."
+
+## D10 · Default agent framework
+**Question:** keep **pydantic-ai** as the default behind an `AgentPort` (LangGraph for HITL/durable,
+OpenAI Agents only if GPT-committed)?
+- **Recommended default:** **pydantic-ai** (typed, light, multi-provider, MCP-first); seam to LangGraph.
+- **Why:** ~90% of agent use is near-linear; OpenAI Agents is ~3× Sonnet cost. Durable runs wrap the
+  platform `WorkflowPort` (DBOS) regardless of framework.
+- **Need from you:** ✅ confirm pydantic-ai default, or name another.
+
+## D11 · Embedding model + vector store
+**Question:** RAG/memory default = **pgvector** + **OpenAI `text-embedding-3-small`**, with self-host
+BGE and Qdrant as seams?
+- **Recommended default:** **pgvector + text-embedding-3-small** (cheap/quality, no new infra);
+  **self-host BGE** (TEI) if PII/DPDP or cost demands embeddings stay in-house; Qdrant only >~50M vectors.
+- **Why:** Postgres-native avoids new infra and gives RLS + DPDP-cascade delete free; managed embeddings
+  are cheapest unless residency forces self-host.
+- **Need from you:** ✅ managed embeddings ok, or self-host BGE for residency?
+
+## D12 · Agent-memory engine
+**Question:** default `MemoryPort` = **Postgres** (threads + facts + pgvector), with Mem0/Zep as seams?
+- **Recommended default:** **Postgres-native**; adopt Mem0 (entity extraction) or Zep (temporal facts)
+  only when that's a revenue lever.
+- **Need from you:** ✅ Postgres-native default ok?
+
+## D13 · Evals + GenAI tracing backend
+**Question:** **DeepEval** CI eval-gate (block regressions on the existing gate) + GenAI spans over
+OTLP; which tracing backend — **self-host Phoenix/Langfuse** vs managed vs **OTLP-into-existing-stack
+only**?
+- **Recommended default:** **DeepEval gate + OTel GenAI spans into the existing OTLP stack**; add a
+  self-host **Arize Phoenix** (lean) or managed free-tier only when you need LLM-specific dashboards.
+- **Why:** OTLP-first keeps the backend swappable; DeepEval is free/local and gates on the CI you
+  already enforce.
+- **Need from you:** ✅ confirm DeepEval + OTLP-only to start, or pick a tracing backend now.
+
+---
+
 ### How to respond
 A one-line answer per item (or "all defaults") unblocks the build. Defaults are chosen to be the
 cost-effective, self-hostable, India-resident, low-lock-in option — so "all defaults" is a coherent,
-shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases.
+shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases; **D9-D13 before Wave 5**
+(D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential).

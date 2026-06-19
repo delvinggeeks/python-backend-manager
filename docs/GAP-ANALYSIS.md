@@ -41,6 +41,15 @@ Severity: 🔴 high (security/correctness/revenue-blocking) · 🟠 medium (real
 | 23 | **Observability** | OTLP + self-host stack + Sentry | cost-right; managed free-tier seam | 🟡 | **FINE-AS-IS** (doc) |
 | 24 | **Admin** | sqladmin | adequate to ~PMF | 🟡 | **FINE-AS-IS** |
 | 25 | **Health/SLO posture** | /healthz /readyz | + SLO doc + graceful degradation | 🟡 | **SEAM-NOW** (light) |
+| — | **AI-native application layer** | base only (toggles + example agent + deps) | full AI stack — see below | 🔴/🟠 | **Wave 5** (own doc) |
+
+> **AI layer (Wave 5).** Detailed in [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md) — too large for one
+> row. Summary: **BUILD-NOW** — LLM gateway + per-tenant token metering (🔴, the usage-priced-AI
+> unit-economics link) and GenAI tracing + evals CI-gate (🔴). **SEAM-NOW** — `AgentPort` runtime,
+> `RetrievalPort` (RAG, pgvector-native), `MemoryPort` (Postgres), `GuardrailPort`, `PromptPort`,
+> `MCPToolPort`. **FINE-AS-IS** — the framework-per-service toggles and the model cascade; **gold-
+> plating rejected** — no dedicated vector DB / managed memory / managed gateway / Langfuse cluster /
+> multi-agent framework before a real trigger. Durable agent runs reuse platform `WorkflowPort` (P11).
 
 ---
 

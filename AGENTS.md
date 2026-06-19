@@ -46,6 +46,9 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
 - `docs/LIBRARY-DECISIONS.md` — the chosen default lib/provider per subsystem + the swap path (port).
   Don't re-litigate a decision; if you must, update the ADR.
 - `docs/ARCHITECTURE.md` — target architecture + the port-adapter catalog (the seam contracts).
+- `docs/AI-AGENTIC-STACK.md` — the AI-native application layer (LLM gateway + token metering, agent
+  runtime, RAG, memory, evals/tracing, guardrails/MCP-safety); the AI counterpart to LIBRARY-DECISIONS,
+  sequenced as ROADMAP Wave 5. Its defining seam: token-usage → `MeteringPort` (AI cost = billable unit).
 - `docs/GAP-ANALYSIS.md` — what's BUILD-NOW vs SEAM-NOW vs FINE-AS-IS, and why (incl. gold-plating
   explicitly rejected — don't build the deferred items without a real trigger).
 - `docs/CURRENT-STATE.md` — the inventory as of the spec.

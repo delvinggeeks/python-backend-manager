@@ -232,6 +232,77 @@ them automatically — no branch-protection change).
 
 ---
 
+## Wave 5 — AI-native application layer (the usage-priced AI product surface)
+
+Specs in [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md). Inherits the P3 matrix; **no-infra tests mock
+LLM calls** (no live provider keys). The throughline: the gateway/engines are seams, the **token
+cost-metering is the core** (ties to P7).
+
+### P21 · LLM gateway + per-tenant token metering  🔴 ⭐
+- **Scope:** `LLMPort` (LiteLLM **SDK in-process** default) with provider routing + fallback,
+  **prompt caching** + **semantic caching** (Redis), and a **token-usage → `MeteringPort`** bridge
+  with per-tenant **budget caps (429 on exceed)**. Charge via the existing `PaymentsPort`.
+- **Toggle/Port:** `include_llm_gateway` (implies `llm`); `LLMPort`, `llm_gateway` setting.
+- **Implies/Deps:** llm; **P7 metering** (for billing tie-in — degrades to log-only when metering
+  absent); cache (Redis) for caching.
+- **DoD:** per-call usage parsed (input/output/cache tokens → cost) and metered per tenant; a tenant
+  over budget gets 429; caching demonstrably reduces tokens; works against a **mocked provider** (no
+  live key).
+- **CI:** `llm_gateway` row (ALONE: llm+cache) + `llm_gateway_full` (+billing metering) under a fake
+  provider + unreachable Redis (caching degrades open).
+
+### P22 · Agent runtime seam + GenAI tracing  🟠
+- **Scope:** a thin **`AgentRuntime`/`AgentPort`** wrapping the framework toggles (pydantic-ai default;
+  retrofit `example_agent.py`); emit **OTel GenAI spans** (tokens/cost/model/tool calls) via the
+  existing observability seam; per-call cost + usage-cap; long runs wrap **`WorkflowPort` (P11)**.
+- **Toggle/Port:** uses `agent_framework` + `include_observability`; `AgentPort`.
+- **Implies/Deps:** an agent framework extra; observability (for GenAI spans, gated).
+- **DoD:** the `/agent` route runs via the port for each framework; GenAI spans emitted when
+  observability on; no behavior change when off (byte-identity); durable variant checkpoints via P11.
+- **CI:** framework matrix rows assert the runner + (when observability) span attributes, mocked LLM.
+
+### P23 · RAG / RetrievalPort  🟠
+- **Scope:** build the `rag` module — `RetrievalPort` with a **pgvector-native** hybrid search
+  (tsvector + vector, RRF) + ingestion (`pypdf` + `semantic-text-splitter`) + `EmbeddingPort`
+  (`text-embedding-3-small` default) + optional `RerankPort`; Qdrant adapter seam.
+- **Toggle/Port:** `include_rag` (implies db + pgvector); `RetrievalPort`/`EmbeddingPort`/`RerankPort`.
+- **Implies/Deps:** db (pgvector). DPDP-cascade delete by collection.
+- **DoD:** ingest→chunk→embed→store→hybrid-retrieve works on sqlite/pgvector test path with a mocked
+  embedder; rerank optional; tenant-scoped + erasable.
+- **CI:** `rag` row (db) with a fake embedding function.
+
+### P24 · Agent memory / MemoryPort  🟠
+- **Scope:** `MemoryPort` — Postgres `threads`/`messages`/`memory_facts` (+ pgvector long-term),
+  RLS-isolated, **DPDP TTL + audit + erasure**; composes with `RetrievalPort` (P23) + `WorkflowPort`
+  (P11); Mem0/Zep adapter seams.
+- **Toggle/Port:** `include_memory` (implies db); `MemoryPort`, `memory_provider` setting.
+- **Implies/Deps:** db; pairs with P23/P11; erasure ties to P16.
+- **DoD:** add/fetch thread + semantic fact retrieval via the port; tenant-isolated; TTL/erase works;
+  mocked embedder for no-infra.
+- **CI:** `memory` row (db).
+
+### P25 · LLM evals + eval-gate + tracing backend  🔴
+- **Scope:** a **DeepEval** harness (`evals/`) + a CI **eval-gate** (accuracy/safety/cost-delta
+  thresholds, LLM-as-judge) wired into the `generate (capability)` gate; a Langfuse/Phoenix
+  tracing-backend adapter behind the OTLP seam (off by default).
+- **Toggle/Port:** `include_evals` extra; tracing backend via `OTEL_*` endpoint.
+- **Implies/Deps:** an agent framework (evals target model calls). Uses a **mocked/cheap judge** in CI.
+- **DoD:** `just evals` runs locally; the CI gate blocks a regression beyond threshold; baselines
+  stored in-repo; no live provider needed (recorded fixtures / mock judge).
+- **CI:** an `evals` leg on framework rows (skips `none`); thresholds gate merge.
+
+### P26 · Guardrails + prompts + MCP tool safety  🟠
+- **Scope:** `GuardrailPort` (`instructor` + LLM-Guard PII/injection + Guardrails AI; PII redaction
+  ties to P15); `PromptPort` (Postgres prompt registry + versioning + A/B via `FeatureFlagPort` P18);
+  `MCPToolPort` (per-tenant tool scoping + **SSRF guard reused from P1** + sandboxed-execution seam).
+- **Toggle/Port:** `include_guardrails`, `include_prompts`; extends `include_mcp`.
+- **Implies/Deps:** llm; P1 (SSRF), P15 (PII), P18 (flags) where present.
+- **DoD:** injection/PII scan on the prompt boundary; schema-enforced output; prompt fetch-by-label;
+  MCP tools scoped per tenant + URL-fetch tools SSRF-guarded; all no-op-safe when unconfigured.
+- **CI:** `guardrails` + `mcp` rows (mocked LLM; SSRF unit test).
+
+---
+
 ## Deliberately deferred (seams exist; do NOT build until a real trigger)
 
 Listed so "not building these" is a *recorded decision*, not an omission ([PRINCIPLES.md#P9](PRINCIPLES.md)):
@@ -248,6 +319,11 @@ Listed so "not building these" is a *recorded decision*, not an omission ([PRINC
 | **Caching** subsystem | optional `CachePort` | a measured hot path |
 | **Debezium/Kafka** CDC | outbox relay (P5) | >~1M events/day |
 | Managed metering (Lago/Orb) | `MeteringPort` (P7) | volume justifies 2-4% revenue share |
+| **LiteLLM proxy / Portkey** gateway | `LLMPort` (P21) | >100 tenants need central governance |
+| Dedicated **vector DB** (Qdrant/Weaviate) | `RetrievalPort` (P23) | >~50M vectors / filter-heavy |
+| Managed **memory** (Mem0/Zep) | `MemoryPort` (P24) | entity-extraction/temporal reasoning is a revenue lever |
+| Self-host **Langfuse** cluster | OTLP GenAI seam (P25) | data-residency mandate / team scale |
+| **LangGraph/OpenAI-Agents** as default | `AgentPort` (P22) | a branching/HITL or GPT-committed product |
 
 ---
 
@@ -263,11 +339,18 @@ P4 RLS ──┘
 P8 RateLimit · P9 Notify · P10 Authz · P11 Workflows · P12 Datasource ·
 P13 SSO/MFA · P14 Secrets · P15 PIIEnc ──► P16 DataRights · P17 APIv ·
 P18 Flags · P19 Search · P20 Cost/Ops      (P16 also needs P5)
+
+Wave 5 (AI):  P21 LLM-gateway+metering ⭐ (needs P7) ─┐
+              P22 AgentRuntime+GenAI-tracing (needs P11 for durable)
+              P23 RAG ─► P24 Memory (also needs P11)
+              P25 Evals+tracing · P26 Guardrails+prompts+MCP (needs P1/P15/P18)
 ```
 
 Waves 0-1 are parallel-safe; Wave 2 gates Wave 3; Wave 4 is value-ordered and largely independent
-(only P16 has an intra-wave dep on P15+P5). Each phase is its own `feat:` PR + version bump; arm
-squash auto-merge per the standing rules.
+(only P16 has an intra-wave dep on P15+P5). **Wave 5 (AI)** rides the platform: P21 needs P7
+metering, P22's durable path needs P11, P24 builds on P23, and P26 reuses P1/P15/P18 — but each is
+still one shippable `feat:` PR once its deps land. Each phase is its own `feat:` PR + version bump;
+arm squash auto-merge per the standing rules.
 
 ---
 
@@ -278,7 +361,10 @@ squash auto-merge per the standing rules.
   audit → P10 note; backup/DR + retention → P20), plus an org-invitations completeness check (P9).
   Nothing else material uncovered: signup/verify/reset (shipped), multi-currency (Razorpay/INR via the
   payments port), i18n of notifications (a future `NotificationPort` adapter concern, deferred), and
-  status-page/incident-comms (ops, out of template scope).
+  status-page/incident-comms (ops, out of template scope). **The AI-native application layer**
+  (LLM gateway + token metering, RAG, agent memory, evals/tracing, guardrails/MCP-safety) was the
+  one substantial omission of the first spec pass — now covered as **Wave 5 (P21-P26)** with its own
+  research doc [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md).
 - **Any STEP-2 requirement uncovered?** All 8 subsystem clusters + all 13 cross-cutting items map to a
   phase or a FINE-AS-IS verdict (cross-checked against [GAP-ANALYSIS.md](GAP-ANALYSIS.md)).
 - **Any phase not independently validatable?** Each has a concrete CI row or render-gate/test, and the

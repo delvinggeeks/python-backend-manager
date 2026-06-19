@@ -94,9 +94,18 @@ Legend: **status** = ✅ exists · ➕ build-now (this roadmap) · 🔌 seam-now
 | **SecretsPort** (config provider) | 🔌 | env/`.env` (discipline) | Infisical/Vault/cloud secret manager | `secrets_provider` |
 | **KMS / field-encryption** | 🔌 | app-layer envelope encryption (local key) | cloud KMS (AWS/GCP India region) | `kms_provider` |
 | **ObservabilityExport** (OTLP) | ✅ | self-host Grafana/Tempo/Loki/Prometheus | Axiom / SigNoz / Grafana Cloud | `OTEL_*` endpoint |
+| **LLMPort** (model router + cost) | ➕ | LiteLLM SDK in-process + prompt/semantic caching; token→MeteringPort | LiteLLM proxy / Portkey / Cloudflare AI Gateway | `llm_gateway` |
+| **AgentRuntime / AgentPort** | 🔌 | framework toggle (pydantic-ai default) | LangGraph / OpenAI Agents | `agent_framework` |
+| **RetrievalPort** (RAG) + Embedding/Rerank | 🔌 | pgvector-native hybrid; `text-embedding-3-small` | Qdrant; self-host BGE | `search_backend` / `embedding_model` |
+| **MemoryPort** (agent memory) | 🔌 | Postgres threads/facts (+pgvector, RLS, TTL) | Mem0 / Zep / Letta | `memory_provider` |
+| **GuardrailPort · PromptPort · MCPToolPort** | 🔌 | instructor + LLM-Guard · Postgres prompt registry · FastMCP + per-tenant scope + SSRF | NeMo · Langfuse prompts · sandboxed/hosted MCP | toggles |
+| **GenAI tracing + evals** | ➕ | OTel GenAI spans (ride OTLP) + DeepEval CI-gate | Langfuse / Phoenix (self-host) | `OTEL_*` / `include_evals` |
 
 The catalog is the contract surface: a new phase adds *at most* a port + a default adapter + a
-toggle; it never wires a vendor SDK into a handler.
+toggle; it never wires a vendor SDK into a handler. The **AI-native application layer** (LLM gateway,
+RAG, memory, guardrails, evals — the rows above the line are platform; these are the AI surface) is
+specified in [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md) and sequenced as ROADMAP Wave 5. Its defining
+seam is *token-usage → `MeteringPort`*: the AI layer's cost is the platform's billable unit.
 
 ---
 
