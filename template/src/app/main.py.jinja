@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
 {% endif %}
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
     # Imported here, not at module top, so `app.main` can be imported without a
     # configured DATABASE_URL — the user-DB engine is built when the app is created.
     from app.users import auth_backend, fastapi_users
@@ -117,6 +117,14 @@ def create_app() -> FastAPI:
     from app.observability import setup_observability
 
     setup_observability(app)
+{% endif %}
+{% if include_admin %}
+    # Mount the sqladmin control panel at /admin, gated behind superuser-only auth. Imported
+    # here (not at module top) so `app.main` imports without a configured DATABASE_URL — the
+    # admin binds the db engine when the app is created.
+    from app.admin import mount_admin
+
+    mount_admin(app)
 {% endif %}
     return app
 

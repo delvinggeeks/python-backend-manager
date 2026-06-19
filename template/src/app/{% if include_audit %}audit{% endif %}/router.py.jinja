@@ -3,7 +3,7 @@
 Org-scoped (``GET /orgs/{org_id}/audit``), authorised by the caller's membership in
 ``{org_id}``{% if include_rbac %} and gated to the ``admin`` role or higher{% endif %}. Results are paginated, newest first.
 {% else %}
-Flat (``GET /audit``){% if include_users %}, requiring an authenticated user{% endif %}. Results are paginated, newest first.
+Flat (``GET /audit``){% if include_users or include_admin %}, requiring an authenticated user{% endif %}. Results are paginated, newest first.
 {% endif %}"""
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.models import AuditLog
 from app.audit.schemas import AuditLogPage, AuditLogRead
 from app.db.session import get_session
-{% if include_users %}from app.users import current_active_user
+{% if include_users or include_admin %}from app.users import current_active_user
 from app.users.models import User
 {% endif %}
 
@@ -92,7 +92,7 @@ def _to_read(entry: AuditLog) -> AuditLogRead:
 async def list_audit_logs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-{% if include_users %}
+{% if include_users or include_admin %}
     user: User = Depends(current_active_user),
 {% endif %}
     session: AsyncSession = Depends(get_session),

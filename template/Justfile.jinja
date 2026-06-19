@@ -61,7 +61,7 @@ observe:
 worker:
     uv run arq app.jobs.worker.WorkerSettings
 {% endif %}
-{% if include_db or include_users or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
 
 # Database migrations (Alembic) — DB-backed services only.
 # New migration from model changes, e.g. `just migration "add user table"`

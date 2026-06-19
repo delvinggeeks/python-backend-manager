@@ -236,6 +236,19 @@ include_webhooks:
     Implies the jobs capability (worker extra) plus the tenancy capability (its users + db).
   default: false
 
+include_admin:
+  type: bool
+  help: >-
+    Scaffold a sqladmin control panel at `/admin`, gated behind SUPERUSER-only authentication
+    (an `AuthenticationBackend` wired to the user table + fastapi-users password hashing — the
+    panel is never mounted open). Registers read/write model views for the capabilities actually
+    present (users always; organizations + memberships with tenancy; subscriptions with billing;
+    API keys with api_keys; webhook endpoints with webhooks; the audit log read-only with audit),
+    redacting secrets (password / API-key hashes, webhook secrets, provider customer / subscription
+    ids) from the list, detail and edit forms. Implies the db + users capabilities (it needs models
+    to administer and an identity to gate on) plus the `admin` extra (sqladmin).
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -272,8 +285,9 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% if include_audit %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% endif %}
+    {% if include_admin %}{% if 'admin' not in parts %}{% set _ = parts.append('admin') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
     {% if include_email %}{% if 'email' not in parts %}{% set _ = parts.append('email') %}{% endif %}{% endif %}

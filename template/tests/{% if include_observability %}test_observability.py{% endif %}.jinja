@@ -66,7 +66,7 @@ def test_init_sentry_noops_without_dsn():
     from app.observability.sentry import init_sentry
 
     assert init_sentry(Settings(sentry_dsn=None)) is False
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_cache or include_jobs %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_cache or include_jobs or include_admin %}
 
 
 async def _ok() -> bool:
@@ -78,7 +78,7 @@ async def _down() -> bool:
 
 
 async def test_readyz_ready_when_dependencies_up(client, monkeypatch):
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
     monkeypatch.setattr("app.observability.health._check_database", _ok)
 {% endif %}
 {% if include_cache or include_jobs or include_webhooks %}
@@ -90,7 +90,7 @@ async def test_readyz_ready_when_dependencies_up(client, monkeypatch):
 
 
 async def test_readyz_degrades_when_dependency_down(client, monkeypatch):
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
     monkeypatch.setattr("app.observability.health._check_database", _down)
 {% endif %}
 {% if include_cache or include_jobs or include_webhooks %}

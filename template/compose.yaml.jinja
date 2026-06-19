@@ -4,9 +4,9 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-{% if include_db or include_cache or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_cache or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
     depends_on:
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
       db:
         condition: service_healthy
 {% endif %}
@@ -15,7 +15,7 @@ services:
         condition: service_started
 {% endif %}
 {% endif %}
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
   db:
     image: pgvector/pgvector:pg17
     environment:
@@ -95,7 +95,7 @@ services:
       - tempo
       - loki
 {% endif %}
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
 volumes:
   pgdata:
 {% endif %}

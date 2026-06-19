@@ -1,0 +1,179 @@
+"""sqladmin model views — one per capability present, secrets redacted.
+
+Each view ships a sensible column / search / sort config and REDACTS secret columns (the
+password and API-key hashes, webhook signing secrets, provider customer / subscription ids)
+from the list, the detail page and the edit form. The audit log is registered read-only
+(append-only — the panel never creates, edits or deletes audit rows).
+
+Columns are referenced by name (sqladmin resolves them against each view's ``model``), which
+keeps the redaction config a plain, greppable allow/deny list of column names.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqladmin import ModelView
+
+{% if include_api_keys %}
+from app.api_keys.models import ApiKey
+{% endif %}
+{% if include_audit %}
+from app.audit.models import AuditLog
+{% endif %}
+{% if include_billing %}
+from app.billing.models import Subscription
+{% endif %}
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+from app.tenancy.models import Membership, Organization
+{% endif %}
+from app.users.models import User
+{% if include_webhooks %}
+from app.webhooks.models import WebhookEndpoint
+{% endif %}
+
+if TYPE_CHECKING:
+    from sqladmin import Admin
+
+
+class UserAdmin(ModelView, model=User):
+    name = "User"
+    name_plural = "Users"
+    icon = "fa-solid fa-user"
+    column_list = ("id", "email", "is_active", "is_superuser", "is_verified")
+    column_searchable_list = ("email",)
+    column_sortable_list = ("email", "is_active", "is_superuser", "is_verified")
+    # The password hash is a secret — keep it off the list, the detail page and the edit form.
+    column_details_exclude_list = ("hashed_password",)
+    form_excluded_columns = ("hashed_password",)
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+
+
+class OrganizationAdmin(ModelView, model=Organization):
+    name = "Organization"
+    name_plural = "Organizations"
+    icon = "fa-solid fa-building"
+    column_list = ("id", "name", "slug", "created_at")
+    column_searchable_list = ("name", "slug")
+    column_sortable_list = ("name", "created_at")
+{% if include_billing %}
+    # The provider customer id is a billing secret — keep it off the detail page and edit form.
+    column_details_exclude_list = ("payments_customer_id",)
+    form_excluded_columns = ("payments_customer_id",)
+{% endif %}
+
+
+class MembershipAdmin(ModelView, model=Membership):
+    name = "Membership"
+    name_plural = "Memberships"
+    icon = "fa-solid fa-user-group"
+    column_list = ("id", "organization_id", "user_id", "role", "created_at")
+    column_searchable_list = ("role",)
+    column_sortable_list = ("role", "created_at")
+{% endif %}
+{% if include_billing %}
+
+
+class SubscriptionAdmin(ModelView, model=Subscription):
+    name = "Subscription"
+    name_plural = "Subscriptions"
+    icon = "fa-solid fa-credit-card"
+    column_list = (
+        "id",
+        "organization_id",
+        "provider",
+        "status",
+        "plan",
+        "current_period_end",
+        "created_at",
+    )
+    column_searchable_list = ("plan", "status")
+    column_sortable_list = ("status", "created_at")
+    # The provider subscription id is a billing secret — keep it off the detail page and form.
+    column_details_exclude_list = ("provider_subscription_id",)
+    form_excluded_columns = ("provider_subscription_id",)
+{% endif %}
+{% if include_api_keys %}
+
+
+class ApiKeyAdmin(ModelView, model=ApiKey):
+    name = "API key"
+    name_plural = "API keys"
+    icon = "fa-solid fa-key"
+    column_list = (
+        "id",
+        "organization_id",
+        "name",
+        "prefix",
+        "scopes",
+        "expires_at",
+        "last_used_at",
+        "revoked_at",
+        "created_at",
+    )
+    column_searchable_list = ("name", "prefix")
+    column_sortable_list = ("name", "created_at")
+    # The hashed secret IS the key — never expose it (list, detail or form). The plaintext
+    # ``prefix`` is a non-secret lookup handle and is safe to show.
+    column_details_exclude_list = ("hashed_secret",)
+    form_excluded_columns = ("hashed_secret",)
+{% endif %}
+{% if include_webhooks %}
+
+
+class WebhookEndpointAdmin(ModelView, model=WebhookEndpoint):
+    name = "Webhook endpoint"
+    name_plural = "Webhook endpoints"
+    icon = "fa-solid fa-bolt"
+    column_list = ("id", "organization_id", "url", "event_types", "active", "created_at")
+    column_searchable_list = ("url",)
+    column_sortable_list = ("active", "created_at")
+    # The per-endpoint signing secret must never be exposed (list, detail or form).
+    column_details_exclude_list = ("secret",)
+    form_excluded_columns = ("secret",)
+{% endif %}
+{% if include_audit %}
+
+
+class AuditLogAdmin(ModelView, model=AuditLog):
+    name = "Audit log"
+    name_plural = "Audit logs"
+    icon = "fa-solid fa-clipboard-list"
+    # Append-only: the panel never creates, edits or deletes audit rows.
+    can_create = False
+    can_edit = False
+    can_delete = False
+    column_list = (
+        "id",
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+        "organization_id",
+{% endif %}
+        "actor",
+        "action",
+        "target",
+        "created_at",
+    )
+    column_searchable_list = ("actor", "action", "target")
+    column_sortable_list = ("action", "created_at")
+{% endif %}
+
+
+def register_model_views(admin: Admin) -> None:
+    """Register every model view this service ships with the given ``Admin``."""
+    admin.add_view(UserAdmin)
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    admin.add_view(OrganizationAdmin)
+    admin.add_view(MembershipAdmin)
+{% endif %}
+{% if include_billing %}
+    admin.add_view(SubscriptionAdmin)
+{% endif %}
+{% if include_api_keys %}
+    admin.add_view(ApiKeyAdmin)
+{% endif %}
+{% if include_webhooks %}
+    admin.add_view(WebhookEndpointAdmin)
+{% endif %}
+{% if include_audit %}
+    admin.add_view(AuditLogAdmin)
+{% endif %}

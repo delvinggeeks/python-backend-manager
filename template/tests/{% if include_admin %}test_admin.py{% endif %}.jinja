@@ -1,0 +1,170 @@
+"""Admin / control-panel tests — superuser-only auth + secret redaction. No live infra.
+
+Runs against the throwaway SQLite database configured in ``conftest.pytest_configure`` (no
+external Postgres) and never starts a real admin server — requests go through the async client.
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi import FastAPI
+from fastapi_users.password import PasswordHelper
+from httpx import AsyncClient
+
+{% if include_api_keys %}
+from app.api_keys.models import ApiKey
+{% endif %}
+{% if include_audit %}
+from app.audit.models import AuditLog
+{% endif %}
+{% if include_billing %}
+from app.billing.models import Subscription
+{% endif %}
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+from app.tenancy.models import Membership, Organization
+{% endif %}
+from app.users.models import User
+{% if include_webhooks %}
+from app.webhooks.models import WebhookEndpoint
+{% endif %}
+
+_PASSWORD = "sup3r-s3cret-passw0rd"
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    # Every mapped table exists so the panel (and its dashboard) never queries a missing table.
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _seed_user(email: str, *, superuser: bool, password: str = _PASSWORD) -> str:
+    """Insert a user (hashing the password as fastapi-users does) and return the stored hash."""
+    hashed = PasswordHelper().hash(password)
+    async with SessionFactory() as session:
+        session.add(
+            User(
+                email=email,
+                hashed_password=hashed,
+                is_active=True,
+                is_superuser=superuser,
+                is_verified=True,
+            )
+        )
+        await session.commit()
+    return hashed
+
+
+async def test_admin_panel_is_mounted(client: AsyncClient) -> None:
+    # The login page is served, so the panel is mounted ...
+    r = await client.get("/admin/login")
+    assert r.status_code == 200
+
+
+async def test_admin_requires_authentication(client: AsyncClient) -> None:
+    # ... but it is NOT open: an unauthenticated request is redirected to the login page.
+    r = await client.get("/admin/")
+    assert r.status_code in (302, 303, 307)
+    assert "/admin/login" in r.headers.get("location", "")
+
+
+async def test_superuser_can_sign_in(client: AsyncClient) -> None:
+    await _seed_user("root@example.com", superuser=True)
+    r = await client.post(
+        "/admin/login", data={"username": "root@example.com", "password": _PASSWORD}
+    )
+    assert r.status_code in (302, 303)  # a successful login redirects into the panel
+    # The session cookie now admits the superuser to the panel itself.
+    r = await client.get("/admin/")
+    assert r.status_code == 200
+
+
+async def test_non_superuser_is_rejected(client: AsyncClient) -> None:
+    await _seed_user("member@example.com", superuser=False)
+    r = await client.post(
+        "/admin/login", data={"username": "member@example.com", "password": _PASSWORD}
+    )
+    assert r.status_code not in (302, 303)  # login refused — no redirect into the panel
+    r = await client.get("/admin/")
+    assert r.status_code in (302, 303, 307)  # still unauthenticated
+
+
+async def test_wrong_password_is_rejected(client: AsyncClient) -> None:
+    await _seed_user("admin2@example.com", superuser=True)
+    r = await client.post(
+        "/admin/login", data={"username": "admin2@example.com", "password": "not-the-password"}
+    )
+    assert r.status_code not in (302, 303)
+
+
+def test_expected_model_views_registered() -> None:
+    from app.admin import mount_admin
+
+    admin = mount_admin(FastAPI())
+    models = {view.model for view in admin.views}
+    assert User in models
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    assert Organization in models
+    assert Membership in models
+{% endif %}
+{% if include_billing %}
+    assert Subscription in models
+{% endif %}
+{% if include_api_keys %}
+    assert ApiKey in models
+{% endif %}
+{% if include_webhooks %}
+    assert WebhookEndpoint in models
+{% endif %}
+{% if include_audit %}
+    assert AuditLog in models
+{% endif %}
+
+
+def test_secret_columns_are_redacted() -> None:
+    from app.admin.views import UserAdmin
+
+    def shown(view: type) -> set[str]:
+        return set(view.column_list)
+
+    def hidden(view: type) -> set[str]:
+        return set(view.column_details_exclude_list)
+
+    # The password hash appears in neither the list nor the detail page.
+    assert "hashed_password" not in shown(UserAdmin)
+    assert "hashed_password" in hidden(UserAdmin)
+{% if include_api_keys %}
+    from app.admin.views import ApiKeyAdmin
+
+    assert "hashed_secret" not in shown(ApiKeyAdmin)
+    assert "hashed_secret" in hidden(ApiKeyAdmin)
+{% endif %}
+{% if include_webhooks %}
+    from app.admin.views import WebhookEndpointAdmin
+
+    assert "secret" not in shown(WebhookEndpointAdmin)
+    assert "secret" in hidden(WebhookEndpointAdmin)
+{% endif %}
+{% if include_billing %}
+    from app.admin.views import OrganizationAdmin, SubscriptionAdmin
+
+    assert "provider_subscription_id" not in shown(SubscriptionAdmin)
+    assert "provider_subscription_id" in hidden(SubscriptionAdmin)
+    assert "payments_customer_id" not in shown(OrganizationAdmin)
+    assert "payments_customer_id" in hidden(OrganizationAdmin)
+{% endif %}
+
+
+async def test_user_list_page_redacts_password_hash(client: AsyncClient) -> None:
+    hashed = await _seed_user("root3@example.com", superuser=True)
+    await client.post("/admin/login", data={"username": "root3@example.com", "password": _PASSWORD})
+    r = await client.get("/admin/user/list")
+    assert r.status_code == 200
+    assert "root3@example.com" in r.text  # the row renders ...
+    assert hashed not in r.text  # ... but the stored password hash is never in the HTML

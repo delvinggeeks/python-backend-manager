@@ -130,7 +130,7 @@ def _setup_otlp(endpoint: str) -> None:
     logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
 
     HTTPXClientInstrumentor().instrument()
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
     from app.db.session import engine

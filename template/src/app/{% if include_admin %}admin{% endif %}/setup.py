@@ -1,0 +1,33 @@
+"""Mount the sqladmin control panel. Requires the `db` + `users` + `admin` extras."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqladmin import Admin
+
+from app.admin.auth import AdminAuth
+from app.admin.views import register_model_views
+from app.core.config import get_settings
+from app.db.session import engine
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+
+def mount_admin(app: FastAPI) -> Admin:
+    """Mount the admin UI at /admin behind superuser-only authentication and register a model
+    view for every capability this service actually ships.
+
+    The session-signing secret reuses ``USERS_JWT_SECRET`` so the panel shares the service's
+    one auth secret rather than introducing another.
+    """
+    settings = get_settings()
+    admin = Admin(
+        app,
+        engine,
+        authentication_backend=AdminAuth(secret_key=settings.users_jwt_secret),
+        title=f"{settings.app_name} admin",
+    )
+    register_model_views(admin)
+    return admin

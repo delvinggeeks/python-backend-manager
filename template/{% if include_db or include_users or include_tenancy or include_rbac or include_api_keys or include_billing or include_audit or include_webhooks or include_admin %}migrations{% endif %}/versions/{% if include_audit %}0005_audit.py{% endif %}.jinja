@@ -1,7 +1,7 @@
 """audit log (append-only event table)
 
 Revision ID: 0005_audit
-Revises: {% if include_billing %}0004_billing{% elif include_api_keys %}0003_api_keys{% elif include_tenancy or include_rbac or include_webhooks %}0002_tenancy{% elif include_users %}0001_initial_schema{% else %}(root){% endif %}
+Revises: {% if include_billing %}0004_billing{% elif include_api_keys %}0003_api_keys{% elif include_tenancy or include_rbac or include_webhooks %}0002_tenancy{% elif include_users or include_admin %}0001_initial_schema{% else %}(root){% endif %}
 
 Create Date: ships with the template (include_audit)
 
@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "0005_audit"
-down_revision: str | Sequence[str] | None = {% if include_billing %}"0004_billing"{% elif include_api_keys %}"0003_api_keys"{% elif include_tenancy or include_rbac or include_webhooks %}"0002_tenancy"{% elif include_users %}"0001_initial_schema"{% else %}None{% endif %}
+down_revision: str | Sequence[str] | None = {% if include_billing %}"0004_billing"{% elif include_api_keys %}"0003_api_keys"{% elif include_tenancy or include_rbac or include_webhooks %}"0002_tenancy"{% elif include_users or include_admin %}"0001_initial_schema"{% else %}None{% endif %}
 
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

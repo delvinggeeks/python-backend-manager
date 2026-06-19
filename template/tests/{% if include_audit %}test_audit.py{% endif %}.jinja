@@ -116,7 +116,7 @@ async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) ->
         await record(session, "thing.one", actor="sys")
         await record(session, "thing.two", actor="sys")
         await session.commit()
-{% if include_users %}
+{% if include_users or include_admin %}
     reg = {"email": "reader@example.com", "password": "s3cret-passw0rd"}
     r = await client.post("/auth/register", json=reg)
     assert r.status_code == 201, r.text
@@ -136,7 +136,7 @@ async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) ->
 
 
 async def test_flat_audit_log_is_append_only(client: AsyncClient) -> None:
-{% if include_users %}
+{% if include_users or include_admin %}
     reg = {"email": "writer@example.com", "password": "s3cret-passw0rd"}
     r = await client.post("/auth/register", json=reg)
     assert r.status_code == 201, r.text

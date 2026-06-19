@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     model_fast: str = "claude-haiku-4-5-20251001"
     model_default: str = "claude-sonnet-4-6"
     model_frontier: str = "claude-opus-4-8"
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
 
     # --- Users / auth (only used if the `users` extra is installed) ---
     #     Override USERS_JWT_SECRET in every non-local environment (>=32 bytes).

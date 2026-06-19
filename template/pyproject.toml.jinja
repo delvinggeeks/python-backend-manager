@@ -60,7 +60,7 @@ payments = ["stripe>=11", "razorpay>=2.0"]
 # one is active per service via EMAIL_PROVIDER, and jinja2 renders the bodies.
 email = ["aioboto3>=14", "aiosmtplib>=3.0", "jinja2>=3.1"]
 storage = ["aioboto3>=14"]
-admin = ["sqladmin>=0.20"]
+admin = ["sqladmin>=0.20"{% if include_admin %}, "itsdangerous>=2.0"{% endif %}]
 ratelimit = ["fastapi-limiter>=0.1.6"]
 scheduler = ["apscheduler>=3.11"]
 api = ["fastapi-pagination>=0.12", "python-slugify>=8"]
@@ -91,7 +91,7 @@ dev = [
     "polyfactory>=2.18",
     "respx>=0.21",
     "testcontainers>=4.8",
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
     "aiosqlite>=0.20",
 {% endif %}
 ]
