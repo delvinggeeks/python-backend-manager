@@ -14,6 +14,7 @@ from app import __version__
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
+from app.core.middleware import SecurityHeadersMiddleware
 {% if include_mcp %}
 from app.mcp_server import mcp_app
 
@@ -43,6 +44,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if settings.security_headers_enabled:
+        app.add_middleware(
+            SecurityHeadersMiddleware,
+            csp=settings.security_csp,
+            hsts_max_age=settings.security_hsts_max_age,
+            include_hsts=settings.is_production,
+        )
     app.include_router(api_router)
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
