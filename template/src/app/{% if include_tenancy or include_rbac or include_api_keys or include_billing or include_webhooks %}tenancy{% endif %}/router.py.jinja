@@ -55,6 +55,20 @@ async def create_organization(
             detail="Organization slug already taken",
         ) from exc
     await session.refresh(org)
+{% if include_audit %}
+    from app.audit import record
+
+    await record(
+        session,
+        "organization.created",
+        actor=str(user.id),
+        target=str(org.id),
+        organization_id=org.id,
+        name=org.name,
+        slug=org.slug,
+    )
+    await session.commit()
+{% endif %}
     return org
 
 
@@ -119,6 +133,31 @@ async def add_member(
             detail="User is already a member of this organization",
         ) from exc
     await session.refresh(new_membership)
+{% if include_audit %}
+    from app.audit import record
+
+    await record(
+        session,
+        "member.added",
+        actor=str(membership.user_id),
+        target=str(payload.user_id),
+        organization_id=org_id,
+        role=payload.role,
+    )
+    await session.commit()
+{% endif %}
+{% if include_webhooks %}
+    from app.webhooks import dispatch
+
+    # Best-effort fan-out: enqueues a signed delivery per subscribed endpoint. A dead queue
+    # is swallowed inside dispatch, so a webhook outage never breaks adding a member.
+    await dispatch(
+        session,
+        event_type="member.added",
+        organization_id=org_id,
+        data={"user_id": str(payload.user_id), "role": payload.role},
+    )
+{% endif %}
     return new_membership
 
 

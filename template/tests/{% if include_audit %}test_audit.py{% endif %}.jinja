@@ -1,0 +1,155 @@
+"""Audit-log tests — requires the `db` extra (and `users` once tenancy is on).
+
+Proves the core contract at the DB seam: :func:`app.audit.record` appends a row, ``**meta`` is
+stored as JSON, and the log only ever grows (append-only). The HTTP layer is then exercised
+through the read-only list endpoint, including that no write route exists. Runs against the
+throwaway SQLite database from `conftest.pytest_configure`, so it needs no external Postgres.
+"""
+
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import func, select
+
+from app.audit import record
+from app.audit.models import AuditLog
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
+from app.users.models import User  # noqa: F401  (registers the user table)
+{% endif %}
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def test_record_persists_an_event() -> None:
+    async with SessionFactory() as session:
+        entry = await record(
+            session, "thing.happened", actor="alice", target="resource-1", reason="testing"
+        )
+        await session.commit()
+        assert entry.id is not None
+
+    async with SessionFactory() as session:
+        result = await session.execute(select(AuditLog).where(AuditLog.action == "thing.happened"))
+        row = result.scalar_one()
+    assert row.actor == "alice"
+    assert row.target == "resource-1"
+    assert row.meta == {"reason": "testing"}
+
+
+async def test_record_without_meta_stores_null() -> None:
+    async with SessionFactory() as session:
+        await record(session, "plain.event")
+        await session.commit()
+
+    async with SessionFactory() as session:
+        result = await session.execute(select(AuditLog).where(AuditLog.action == "plain.event"))
+        row = result.scalar_one()
+    assert row.meta is None
+
+
+async def test_audit_log_accumulates_append_only() -> None:
+    async with SessionFactory() as session:
+        await record(session, "first.event", actor="sys")
+        await record(session, "second.event", actor="sys")
+        await session.commit()
+
+    async with SessionFactory() as session:
+        total = await session.scalar(select(func.count()).select_from(AuditLog))
+    assert total == 2
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+
+
+async def _login(client: AsyncClient, email: str, password: str) -> dict[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def _make_org(client: AsyncClient, auth: dict[str, str]) -> str:
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def test_org_created_event_is_recorded_and_listed(client: AsyncClient) -> None:
+    # Creating an org records an "organization.created" audit event via the tenancy flow hook;
+    # the org owner (>= admin) can then read it back from the org-scoped list endpoint.
+    auth = await _login(client, "owner@example.com", "s3cret-passw0rd")
+    org_id = await _make_org(client, auth)
+
+    r = await client.get(f"/orgs/{org_id}/audit", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    created = next(i for i in body["items"] if i["action"] == "organization.created")
+    assert created["organization_id"] == org_id
+    assert created["target"] == org_id
+
+
+async def test_org_audit_log_is_append_only(client: AsyncClient) -> None:
+    auth = await _login(client, "owner@example.com", "s3cret-passw0rd")
+    org_id = await _make_org(client, auth)
+
+    # Read-only: only GET is mounted, so writes are 405 Method Not Allowed.
+    r = await client.post(f"/orgs/{org_id}/audit", json={}, headers=auth)
+    assert r.status_code == 405
+    r = await client.delete(f"/orgs/{org_id}/audit", headers=auth)
+    assert r.status_code == 405
+{% else %}
+
+
+async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) -> None:
+    async with SessionFactory() as session:
+        await record(session, "thing.one", actor="sys")
+        await record(session, "thing.two", actor="sys")
+        await session.commit()
+{% if include_users %}
+    reg = {"email": "reader@example.com", "password": "s3cret-passw0rd"}
+    r = await client.post("/auth/register", json=reg)
+    assert r.status_code == 201, r.text
+    r = await client.post(
+        "/auth/jwt/login", data={"username": reg["email"], "password": reg["password"]}
+    )
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+{% else %}
+    headers: dict[str, str] = {}
+{% endif %}
+    r = await client.get("/audit", headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 2
+    actions = {item["action"] for item in body["items"]}
+    assert {"thing.one", "thing.two"} <= actions
+
+
+async def test_flat_audit_log_is_append_only(client: AsyncClient) -> None:
+{% if include_users %}
+    reg = {"email": "writer@example.com", "password": "s3cret-passw0rd"}
+    r = await client.post("/auth/register", json=reg)
+    assert r.status_code == 201, r.text
+    r = await client.post(
+        "/auth/jwt/login", data={"username": reg["email"], "password": reg["password"]}
+    )
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+{% else %}
+    headers: dict[str, str] = {}
+{% endif %}
+    # Read-only: only GET is mounted, so writes are 405 Method Not Allowed.
+    r = await client.post("/audit", json={}, headers=headers)
+    assert r.status_code == 405
+    r = await client.delete("/audit", headers=headers)
+    assert r.status_code == 405
+{% endif %}

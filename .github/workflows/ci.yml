@@ -143,6 +143,18 @@ jobs:
           # tested — both jobs configs run as matrix rows, not a separate leg.
           - { capability: jobs,       data: "--data include_jobs=true --data include_db=true", extras: "--extra db --extra worker" }
           - { capability: jobs_email, data: "--data include_jobs=true --data include_email=true --data include_users=true", extras: "--extra db --extra users --extra email --extra worker" }
+          # Audit log is db-backed but users-independent: the base row runs it ALONE (no users, no
+          # tenancy) so the flat /audit router, the None-rooted 0005 migration, and the DB-level
+          # record() helper are all exercised — the alembic round-trip below covers 0005.
+          - { capability: audit,    data: "--data include_audit=true", extras: "--extra db" }
+          # Webhooks implies jobs (worker) + tenancy (its users + db). This row exercises the
+          # /orgs/{org_id}/webhooks CRUD, the best-effort dispatch enqueue (fake pool — no Redis),
+          # and the signed deliver_webhook task. No audit here, so delivery records nothing.
+          - { capability: webhooks, data: "--data include_webhooks=true", extras: "--extra db --extra users --extra worker" }
+          # Both together, plus rbac: the audit list endpoint is org-scoped + admin-gated, the
+          # org.created / member.added flows record audit entries, member.added fans out a webhook,
+          # and each delivery attempt is recorded to the audit log — the full cross-module path.
+          - { capability: audit_webhooks, data: "--data include_audit=true --data include_webhooks=true --data include_rbac=true", extras: "--extra db --extra users --extra worker" }
     steps:
       - uses: actions/checkout@v6
         with:

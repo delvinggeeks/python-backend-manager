@@ -1,0 +1,274 @@
+"""Outbound-webhooks tests — requires the `db`, `users`, and `worker` extras.
+
+NO live infrastructure: the arq pool is an in-memory fake (no Redis) and every outbound HTTP
+call is mocked with respx (no network). Proves the contract end to end — endpoint CRUD, that
+``dispatch`` ENQUEUES one signed delivery per subscribed endpoint, that the worker task POSTs the
+event with a correct HMAC-SHA256 signature and retries on failure, and that a dead queue is
+swallowed so the triggering request still succeeds. Runs against the throwaway SQLite database
+from `conftest.pytest_configure`.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+import httpx
+import pytest
+import respx
+from arq import Retry
+from httpx import AsyncClient
+from redis.exceptions import RedisError
+from sqlalchemy import select
+
+{% if include_audit %}
+from app.audit.models import AuditLog
+{% endif %}
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+from app.jobs import queue
+from app.jobs.tasks import deliver_webhook
+from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
+from app.users.models import User  # noqa: F401  (registers the user table)
+from app.webhooks import dispatch
+from app.webhooks.models import WebhookEndpoint
+from app.webhooks.security import SIGNATURE_HEADER, sign_payload
+
+
+class _FakePool:
+    """Stand-in for the arq Redis pool: records enqueue_job calls instead of hitting Redis."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def enqueue_job(self, function: str, *args: Any, **kwargs: Any) -> None:
+        self.jobs.append((function, args, kwargs))
+
+
+@pytest.fixture
+def fake_pool(monkeypatch: pytest.MonkeyPatch) -> _FakePool:
+    """Patch the enqueue seam's pool getter so dispatch records instead of touching Redis."""
+    pool = _FakePool()
+
+    async def _get_pool() -> _FakePool:
+        return pool
+
+    monkeypatch.setattr(queue, "get_pool", _get_pool)
+    return pool
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _login(client: AsyncClient, email: str, password: str) -> dict[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def _make_org(client: AsyncClient, auth: dict[str, str]) -> str:
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def _seed_org_with_endpoint(
+    *, event_types: str = "member.added", active: bool = True, secret: str = "topsecret"
+) -> tuple[uuid.UUID, str, str]:
+    """Insert an org + one webhook endpoint directly; return (org_id, endpoint_id, url)."""
+    url = "https://hooks.example.com/receive"
+    async with SessionFactory() as session:
+        org = Organization(name="Acme", slug="acme")
+        session.add(org)
+        await session.flush()
+        endpoint = WebhookEndpoint(
+            organization_id=org.id,
+            url=url,
+            secret=secret,
+            event_types=event_types,
+            active=active,
+        )
+        session.add(endpoint)
+        await session.commit()
+        await session.refresh(endpoint)
+        return org.id, str(endpoint.id), url
+
+
+async def test_webhook_endpoint_crud(client: AsyncClient) -> None:
+    auth = await _login(client, "owner@example.com", "s3cret-passw0rd")
+    org_id = await _make_org(client, auth)
+
+    r = await client.post(
+        f"/orgs/{org_id}/webhooks",
+        json={
+            "url": "https://hooks.example.com/receive",
+            "event_types": ["member.added", "org.updated"],
+            "secret": "shh",
+        },
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    created = r.json()
+    assert created["event_types"] == ["member.added", "org.updated"]
+    assert created["secret"] == "shh"
+    assert created["active"] is True
+    endpoint_id = created["id"]
+
+    r = await client.get(f"/orgs/{org_id}/webhooks", headers=auth)
+    assert r.status_code == 200, r.text
+    assert [e["id"] for e in r.json()] == [endpoint_id]
+
+    r = await client.patch(
+        f"/orgs/{org_id}/webhooks/{endpoint_id}", json={"active": False}, headers=auth
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is False
+
+    r = await client.delete(f"/orgs/{org_id}/webhooks/{endpoint_id}", headers=auth)
+    assert r.status_code == 204, r.text
+
+    r = await client.get(f"/orgs/{org_id}/webhooks/{endpoint_id}", headers=auth)
+    assert r.status_code == 404
+
+    async with SessionFactory() as session:
+        remaining = (await session.execute(select(WebhookEndpoint))).scalars().all()
+    assert remaining == []
+
+
+async def test_endpoint_secret_is_generated_when_omitted(client: AsyncClient) -> None:
+    auth = await _login(client, "owner@example.com", "s3cret-passw0rd")
+    org_id = await _make_org(client, auth)
+    r = await client.post(
+        f"/orgs/{org_id}/webhooks",
+        json={"url": "https://hooks.example.com/receive", "event_types": ["member.added"]},
+        headers=auth,
+    )
+    assert r.status_code == 201, r.text
+    assert len(r.json()["secret"]) >= 16
+
+
+async def test_dispatch_enqueues_one_signed_delivery_per_subscribed_endpoint(
+    fake_pool: _FakePool,
+) -> None:
+    # Three endpoints: subscribed+active (delivered), subscribed-but-inactive (skipped),
+    # active-but-not-subscribed (skipped). Only the first is enqueued.
+    async with SessionFactory() as session:
+        org = Organization(name="Acme", slug="acme")
+        session.add(org)
+        await session.flush()
+        session.add_all(
+            [
+                WebhookEndpoint(
+                    organization_id=org.id,
+                    url="https://a.example.com/wh",
+                    secret="s1",
+                    event_types="member.added other.event",
+                    active=True,
+                ),
+                WebhookEndpoint(
+                    organization_id=org.id,
+                    url="https://b.example.com/wh",
+                    secret="s2",
+                    event_types="member.added",
+                    active=False,
+                ),
+                WebhookEndpoint(
+                    organization_id=org.id,
+                    url="https://c.example.com/wh",
+                    secret="s3",
+                    event_types="org.updated",
+                    active=True,
+                ),
+            ]
+        )
+        await session.commit()
+        org_id = org.id
+
+    async with SessionFactory() as session:
+        count = await dispatch(
+            session,
+            event_type="member.added",
+            organization_id=org_id,
+            data={"user_id": "u1", "role": "member"},
+        )
+
+    assert count == 1
+    assert len(fake_pool.jobs) == 1
+    function, args, kwargs = fake_pool.jobs[0]
+    assert function == "deliver_webhook"
+    assert args == ()
+    assert kwargs["event_type"] == "member.added"
+    assert kwargs["payload"]["data"] == {"user_id": "u1", "role": "member"}
+
+
+async def test_dispatch_is_best_effort_when_queue_is_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A dead queue must not break the triggering request: enqueue swallows the RedisError
+    # (returns False), so dispatch enqueues nothing and returns 0 instead of raising.
+    org_id, _endpoint_id, _url = await _seed_org_with_endpoint()
+
+    async def _broken_pool() -> Any:
+        raise RedisError("redis unreachable")
+
+    monkeypatch.setattr(queue, "get_pool", _broken_pool)
+    async with SessionFactory() as session:
+        count = await dispatch(
+            session,
+            event_type="member.added",
+            organization_id=org_id,
+            data={"user_id": "u1"},
+        )
+    assert count == 0
+
+
+async def test_deliver_webhook_posts_signed_payload() -> None:
+    _org_id, endpoint_id, url = await _seed_org_with_endpoint(secret="topsecret")
+    payload = {"event_type": "member.added", "organization_id": "org", "data": {"x": 1}}
+
+    with respx.mock:
+        route = respx.post(url).mock(return_value=httpx.Response(200))
+        await deliver_webhook(
+            {"job_try": 1},
+            endpoint_id=endpoint_id,
+            event_type="member.added",
+            payload=payload,
+        )
+
+    assert route.called
+    request = route.calls.last.request
+    expected = "sha256=" + sign_payload("topsecret", request.content)
+    assert request.headers[SIGNATURE_HEADER] == expected
+    assert request.headers["X-Webhook-Event"] == "member.added"
+{% if include_audit %}
+
+    async with SessionFactory() as session:
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.action == "webhook.delivered")
+        )
+        assert result.scalar_one().target == endpoint_id
+{% endif %}
+
+
+async def test_deliver_webhook_retries_on_failure() -> None:
+    _org_id, endpoint_id, url = await _seed_org_with_endpoint()
+    payload = {"event_type": "member.added", "organization_id": "org", "data": {}}
+
+    with respx.mock:
+        respx.post(url).mock(return_value=httpx.Response(500))
+        with pytest.raises(Retry):
+            await deliver_webhook(
+                {"job_try": 1},
+                endpoint_id=endpoint_id,
+                event_type="member.added",
+                payload=payload,
+            )

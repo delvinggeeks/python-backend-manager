@@ -206,6 +206,27 @@ include_jobs:
     THROUGH the queue instead of inline. Implies the `worker` extra (arq); no database required.
   default: false
 
+include_audit:
+  type: bool
+  help: >-
+    Scaffold an append-only audit log: an `app/audit` package with an `AuditLog` model
+    (actor / action / target / JSON metadata, org-scoped when tenancy is on), a `record(...)`
+    helper any service can call, a read-only paginated list endpoint (admin-gated when RBAC is
+    on), and a migration. Real events (org created, member added) are recorded when those flows
+    are present. Append-only: no update or delete. Implies the db extra; no users required.
+  default: false
+
+include_webhooks:
+  type: bool
+  help: >-
+    Scaffold outbound webhooks: an `app/webhooks` package with a tenant-scoped `WebhookEndpoint`
+    model (url / per-endpoint secret / subscribed events / active), `/orgs/{org_id}/webhooks`
+    CRUD routers (admin-gated when RBAC is on), and a `dispatch(...)` helper that ENQUEUES one
+    delivery per subscribed endpoint. Delivery runs in the arq worker (never inline): it POSTs the
+    event signed with HMAC-SHA256 (`X-Webhook-Signature`) via httpx and retries with backoff.
+    Implies the jobs capability (worker extra) plus the tenancy capability (its users + db).
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -242,11 +263,12 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_audit %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
     {% if include_email %}{% if 'email' not in parts %}{% set _ = parts.append('email') %}{% endif %}{% endif %}
-    {% if include_jobs %}{% if 'worker' not in parts %}{% set _ = parts.append('worker') %}{% endif %}{% endif %}
+    {% if include_jobs or include_webhooks %}{% if 'worker' not in parts %}{% set _ = parts.append('worker') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

@@ -15,7 +15,7 @@ from arq.connections import RedisSettings
 
 from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import redis_settings as build_redis_settings
-from app.jobs.tasks import example_task{% if include_email %}, send_email_task{% endif +%}
+from app.jobs.tasks import {% if include_webhooks %}deliver_webhook, {% endif %}example_task{% if include_email %}, send_email_task{% endif +%}
 
 log = get_logger(__name__)
 
@@ -43,6 +43,9 @@ class WorkerSettings:
         example_task,
 {% if include_email %}
         send_email_task,
+{% endif %}
+{% if include_webhooks %}
+        deliver_webhook,
 {% endif %}
     ]
     # Recurring schedule (arq cron) — this example runs every 5 minutes.
