@@ -21,9 +21,9 @@ async def test_metrics_endpoint(client):
     assert "python_info" in resp.text
 
 
-def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
+async def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
     from fastapi import FastAPI
-    from starlette.testclient import TestClient
+    from httpx import ASGITransport, AsyncClient
 
     from app.core.config import get_settings
     from app.observability import setup_observability
@@ -37,10 +37,11 @@ def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
         # The three endpoints are mounted and serve. We probe them rather than introspect
         # app.routes: FastAPI nests included-router routes behind an _IncludedRouter whose
         # .path attribute doesn't exist, so route-set introspection is unreliable.
-        with TestClient(app) as probe:
-            assert probe.get("/healthz").status_code == 200
-            assert probe.get("/metrics").status_code == 200
-            assert probe.get("/readyz").status_code in (200, 503)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as probe:
+            assert (await probe.get("/healthz")).status_code == 200
+            assert (await probe.get("/metrics")).status_code == 200
+            assert (await probe.get("/readyz")).status_code in (200, 503)
     finally:
         get_settings.cache_clear()
 
