@@ -177,7 +177,7 @@ provider's credentials per environment — never hard-coded:
 
 **Adding an email provider** = implement `EmailPort` in `app.email.adapters`, register it in
 `app.email.provider`, and add its key to the `email_provider` choices — see AGENTS.md.
-{% if include_users %}The user manager sends a **welcome** email on registration and a
+{% if include_users or include_admin %}The user manager sends a **welcome** email on registration and a
 **password-reset** email on a reset request, rendered from these templates.{% endif %}
 
 {% endif %}
@@ -207,7 +207,7 @@ choice, not a swappable vendor, so abstracting it would be over-engineering.
 or failing email provider can't delay or break registration / reset requests.{% endif %}
 
 {% endif %}
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_admin %}
 ## Migrations (Alembic)
 
 Schema changes are managed with Alembic. `migrations/env.py` reads `DATABASE_URL` from
@@ -221,17 +221,41 @@ just migrate                           # alembic upgrade head
 
 {% if include_tenancy or include_rbac or include_api_keys or include_billing %}Initial migrations for the `items` + `user` tables and the
 `organizations` + `memberships` tables ship in `migrations/versions/` — run `just migrate`
-to create them.{% elif include_users %}An initial migration for the `items` + `user` tables ships in
+to create them.{% elif include_users or include_admin %}An initial migration for the `items` + `user` tables ships in
 `migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`
 starts empty: generate your first migration with `just migration "initial schema"`,
 review it, then `just migrate`.{% endif %}
+
+{% endif %}
+{% if include_admin %}
+## Admin / control panel (sqladmin)
+
+A [sqladmin](https://aminalaee.dev/sqladmin/) control panel is mounted at **`/admin`**, gated
+behind **superuser-only** authentication — it is never mounted open. The `AuthenticationBackend`
+verifies logins against the `user` table with fastapi-users' own password hashing and admits
+only **active superusers**; the validated user id is held in a signed session and re-checked
+against the database on every request, so deactivating or demoting a user revokes panel access
+immediately.
+
+```bash
+# Promote a user to superuser so they can reach /admin (e.g. with psql):
+#   UPDATE "user" SET is_superuser = true WHERE email = 'you@example.com';
+# then open http://localhost:8000/admin and sign in with that account.
+```
+
+Model views are registered for the capabilities this service ships — users always,
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}organizations + memberships, {% endif %}{% if include_billing %}subscriptions, {% endif %}{% if include_api_keys %}API keys, {% endif %}{% if include_webhooks %}webhook endpoints, {% endif %}{% if include_audit %}and the audit log (read-only / append-only) {% endif %}— with
+secrets **redacted** from the list, the detail page and the edit form: password
+{% if include_api_keys %}and API-key hashes{% else %}hashes{% endif %}{% if include_webhooks %}, webhook signing secrets{% endif %}{% if include_billing %}, and provider customer / subscription ids{% endif %} are
+never exposed. The session-signing secret reuses `USERS_JWT_SECRET`. To administer another
+table, add a `ModelView` in `app/admin/views.py` and register it in `register_model_views`.
 
 {% endif %}
 {% if include_observability %}
 ## Observability (OpenTelemetry — three pillars)
 
 Full OpenTelemetry: **traces, metrics and logs** export over OTLP, correlated. FastAPI and
-httpx are auto-instrumented{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}, along with SQLAlchemy{% endif %}{% if include_cache or include_jobs or include_webhooks %} and Redis{% endif %}; every
+httpx are auto-instrumented{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}, along with SQLAlchemy{% endif %}{% if include_cache or include_jobs or include_webhooks %} and Redis{% endif %}; every
 structlog line emitted inside a request carries the active span's `trace_id` / `span_id`, so a
 log links straight to its trace.
 
@@ -244,7 +268,7 @@ Endpoints (always mounted):
 
 ```
 GET /healthz   # liveness — 200 while the process is up
-GET /readyz    # readiness — probes {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}the database{% endif %}{% if (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks) and (include_cache or include_jobs or include_webhooks) %} + {% endif %}{% if include_cache or include_jobs or include_webhooks %}Redis{% endif %}{% if not (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_cache or include_jobs or include_webhooks) %}its dependencies{% endif %}, 503 if any is down
+GET /readyz    # readiness — probes {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}the database{% endif %}{% if (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin) and (include_cache or include_jobs or include_webhooks) %} + {% endif %}{% if include_cache or include_jobs or include_webhooks %}Redis{% endif %}{% if not (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin or include_cache or include_jobs or include_webhooks) %}its dependencies{% endif %}, 503 if any is down
 GET /metrics   # Prometheus process/runtime metrics (HTTP request metrics export via OTLP)
 ```
 
