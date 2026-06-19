@@ -1,0 +1,12 @@
+# Prometheus — receives the app's metrics over OTLP (pushed via the collector, hence
+# --web.enable-otlp-receiver on the service) and scrapes its own + the collector's internals.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]

@@ -119,6 +119,17 @@ class Settings(BaseSettings):
     ses_secret_access_key: str | None = None
     ses_endpoint_url: str | None = None
 {% endif %}
+{% if include_observability %}
+
+    # --- Observability (only used if the `observability` extra is installed) ---
+    #     The three pillars export over OTLP, but only once OTEL_EXPORTER_OTLP_ENDPOINT is set
+    #     (e.g. http://localhost:4318) — a fresh service runs clean with no collector. Sentry is
+    #     optional too: no SENTRY_DSN -> error reporting no-ops (same pattern as email / jobs).
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_service_name: str | None = None  # defaults to app_name when unset
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+{% endif %}
 
     @property
     def is_production(self) -> bool:

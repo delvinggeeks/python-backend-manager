@@ -1,0 +1,21 @@
+# Grafana datasources, auto-provisioned on startup — Prometheus (metrics), Tempo (traces),
+# Loki (logs). Trace<->log correlation works out of the box because all three share this stack.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+  - name: Tempo
+    uid: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+  - name: Loki
+    uid: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100

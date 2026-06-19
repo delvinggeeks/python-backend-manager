@@ -1,0 +1,111 @@
+"""Observability tests — no live infra (no collector, no Grafana, no network).
+
+Covers: OTel setup builds and no-ops when unconfigured; /healthz + /readyz; readiness degrades
+when a mocked dependency is down; structlog carries trace context when a span is active; Sentry
+is a no-op without a DSN.
+"""
+
+from __future__ import annotations
+
+
+async def test_healthz(client):
+    resp = await client.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+async def test_metrics_endpoint(client):
+    resp = await client.get("/metrics")
+    assert resp.status_code == 200
+    # PlatformCollector always exposes python_info, with no requests recorded yet.
+    assert "python_info" in resp.text
+
+
+async def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.config import get_settings
+    from app.observability import setup_observability
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    get_settings.cache_clear()
+    app = FastAPI()
+    try:
+        enabled = setup_observability(app)
+        assert enabled is False  # nothing exports without a configured endpoint
+        # The three endpoints are mounted and serve. We probe them rather than introspect
+        # app.routes: FastAPI nests included-router routes behind an _IncludedRouter whose
+        # .path attribute doesn't exist, so route-set introspection is unreliable.
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as probe:
+            assert (await probe.get("/healthz")).status_code == 200
+            assert (await probe.get("/metrics")).status_code == 200
+            assert (await probe.get("/readyz")).status_code in (200, 503)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_add_trace_context_injects_span_ids():
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from app.core.logging import add_trace_context
+
+    tracer = TracerProvider().get_tracer("test")
+    # No active span -> the event dict is untouched.
+    assert add_trace_context(None, "info", {"event": "x"}) == {"event": "x"}
+    # Inside a span -> the log line links to its trace.
+    with tracer.start_as_current_span("unit"):
+        enriched = add_trace_context(None, "info", {"event": "x"})
+    assert len(enriched["trace_id"]) == 32
+    assert len(enriched["span_id"]) == 16
+
+
+def test_init_sentry_noops_without_dsn():
+    from app.core.config import Settings
+    from app.observability.sentry import init_sentry
+
+    assert init_sentry(Settings(sentry_dsn=None)) is False
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_cache or include_jobs %}
+
+
+async def _ok() -> bool:
+    return True
+
+
+async def _down() -> bool:
+    return False
+
+
+async def test_readyz_ready_when_dependencies_up(client, monkeypatch):
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+    monkeypatch.setattr("app.observability.health._check_database", _ok)
+{% endif %}
+{% if include_cache or include_jobs or include_webhooks %}
+    monkeypatch.setattr("app.observability.health._check_redis", _ok)
+{% endif %}
+    resp = await client.get("/readyz")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ready"
+
+
+async def test_readyz_degrades_when_dependency_down(client, monkeypatch):
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+    monkeypatch.setattr("app.observability.health._check_database", _down)
+{% endif %}
+{% if include_cache or include_jobs or include_webhooks %}
+    monkeypatch.setattr("app.observability.health._check_redis", _down)
+{% endif %}
+    resp = await client.get("/readyz")
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "degraded"
+{% else %}
+
+
+async def test_readyz_ready_with_no_dependencies(client):
+    resp = await client.get("/readyz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["checks"] == {}
+{% endif %}

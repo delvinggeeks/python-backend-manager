@@ -155,6 +155,13 @@ jobs:
           # org.created / member.added flows record audit entries, member.added fans out a webhook,
           # and each delivery attempt is recorded to the audit log — the full cross-module path.
           - { capability: audit_webhooks, data: "--data include_audit=true --data include_webhooks=true --data include_rbac=true", extras: "--extra db --extra users --extra worker" }
+          # Observability is capability-independent. The base row runs it ALONE at minimal deps
+          # (no db/users/jobs) so any dependency leak surfaces (the OTel SDK + Prometheus + Sentry
+          # install and import, /healthz + /readyz + /metrics serve, setup no-ops with no OTLP
+          # endpoint). The _full row adds db + users + jobs so the SQLAlchemy + Redis
+          # auto-instrumentation and the db/redis readiness probes are compiled and exercised.
+          - { capability: observability,      data: "--data include_observability=true --data include_db=false --data include_cache=false", extras: "--extra observability" }
+          - { capability: observability_full, data: "--data include_observability=true --data include_db=true --data include_users=true --data include_jobs=true", extras: "--extra db --extra users --extra worker --extra observability" }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -187,9 +194,15 @@ jobs:
           uv run mypy src
           uv run pytest
           # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
-          export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
-          uv run alembic upgrade head
-          uv run alembic downgrade base
+          # Only db-backed services render alembic.ini (and install alembic); a db-less capability
+          # (e.g. observability alone) has no migrations, so skip the round-trip there.
+          if [ -f alembic.ini ]; then
+            export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
+            uv run alembic upgrade head
+            uv run alembic downgrade base
+          else
+            echo "no alembic.ini (db-less capability) — skipping migration round-trip"
+          fi
 
   # Single STABLE required status check that gates auto-merge on the whole capability
   # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
