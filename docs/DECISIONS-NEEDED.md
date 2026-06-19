@@ -144,8 +144,41 @@ only**?
 
 ---
 
+## Wave 6 decisions (client surface, agent-safety, alt-payments)
+
+## D14 · Crypto payments + India compliance  ⚠️ (consequential — legal/regulatory)
+**Question:** ship the `PaymentsPort` crypto adapter (BTCPay/Beldex/stablecoins), and for **which
+flows** given India's VDA regime?
+- **Recommended default:** **build the adapter, ship it OFF by default**; enable **stablecoins
+  (USDC/USDT)** first (less volatility/AML friction than privacy coins), and **get counsel before
+  enabling for Indian-resident flows**.
+- **Why (the hard constraints):** India taxes VDAs at **30% + 1% TDS**; **FIU-IND registration is
+  mandatory** for a VDA service provider (PMLA); **FEMA doesn't recognise crypto as forex** — an
+  Indian exporter paid in crypto loses the FIRC and the zero-rated-export GST benefit; **Beldex/privacy
+  coins draw extra AML scrutiny** (FATF). This is a genuine grey zone, not a pure engineering call.
+- **Affects:** whether/when P30 ships enabled, which coins, and the ToS/AML language.
+- **Need from you:** ✅ "build-but-off + stablecoins-first + counsel for India," **or** scope it to
+  non-India customers only, **or** defer P30 entirely.
+
+## D15 · Real-time default
+**Question:** `RealtimePort` default = **FastAPI WebSocket + Redis pub/sub** (in-process), or
+**Centrifugo self-host** from the start?
+- **Recommended default:** **FastAPI-WS + Redis** (no new service; rides existing Redis); Centrifugo
+  when connection scale/ops justify a dedicated tier.
+- **Need from you:** ✅ confirm, or "Centrifugo from day one."
+
+## D16 · Offline-first sync (mobile)
+**Question:** is offline-first sync needed soon (build the `SyncPort` adapter), or stub-only for now?
+- **Recommended default:** **stub the `SyncPort`**; build PowerSync-OSS/ElectricSQL only when a mobile
+  app needs offline (it's a heavy, app-shaped subsystem).
+- **Need from you:** ✅ stub-only, or name the sync engine to build.
+
+---
+
 ### How to respond
 A one-line answer per item (or "all defaults") unblocks the build. Defaults are chosen to be the
 cost-effective, self-hostable, India-resident, low-lock-in option — so "all defaults" is a coherent,
 shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases; **D9-D13 before Wave 5**
-(D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential).
+(D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential);
+**D14-D16 before Wave 6** — **D14 (crypto + India compliance) is a legal/regulatory call, not just
+engineering, and is the one item where "default" needs your explicit sign-off.**

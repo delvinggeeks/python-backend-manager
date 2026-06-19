@@ -303,6 +303,87 @@ cost-metering is the core** (ties to P7).
 
 ---
 
+## Wave 6 — client surface, agent-safety & alternative payments
+
+The 360°-coverage additions ([COVERAGE-MATRIX.md](COVERAGE-MATRIX.md)). Each inherits the P3 matrix;
+cross-wave deps noted. **P29 is security-critical and gates production agents.**
+
+### P27 · Real-time updates  🟠
+- **Scope:** `RealtimePort` + a **FastAPI WebSocket/SSE** default adapter over a **Redis pub/sub
+  backplane** (channels `tenant:{id}:{channel}`); presence (Redis-TTL); **missed-message backfill
+  from the transactional outbox (P5)**; per-tenant channel **authorization via `AuthorizationPort`
+  (P10)**; connection/message rate-limit via `RateLimitPort` (P8); graceful degrade when Redis down.
+- **Toggle/Port:** `include_realtime` (implies cache); `RealtimePort`, `realtime_provider` setting.
+- **Implies/Deps:** cache (Redis backplane); db + **P5 outbox** (reliable backfill).
+- **Alternatives/seam:** self-host **Centrifugo** (BSD) / Soketi; managed **Ably/Pusher** (6-10× cost).
+- **DoD:** WS connect/subscribe/publish/presence/backfill; JWT auth + per-channel authz; backfill from
+  outbox; rate-limit present; **mocked Redis** in the no-infra test (degrades to single-worker).
+- **CI:** `realtime` row (ALONE: cache) with a fake WS client + mocked pub/sub.
+
+### P28 · Mobile / BFF backend support  🟠
+- **Scope (BUILD-NOW backend caps):** a **version-gate `/config`** endpoint (force-upgrade /
+  min-version), an **APNs** adapter alongside FCM (extends `NotificationPort`, P9), **app-attestation
+  verify** (Play Integrity / Apple App Attest — block tampered clients), OAuth2 **PKCE** for native +
+  **deep/universal-link** resolution. **SEAM-NOW:** an offline-first **`SyncPort`** (delta sync +
+  change-tokens). **Out-of-scope:** the app itself.
+- **Toggle/Port:** `include_mobile` (+ `mobile_capabilities`); `MobileConfigPort`, `AttestationPort`,
+  `SyncPort` (stub).
+- **Implies/Deps:** users (auth) + notifications (push). Attestation uses free Google/Apple APIs.
+- **Alternatives (sync seam):** **PowerSync** (OSS self-host) / **ElectricSQL** (Postgres-native) /
+  Replicache — built only when a mobile service needs offline.
+- **DoD:** `/config` returns version policy; attestation token verified (fail-open + logged on first
+  pass); APNs adapter no-ops unconfigured; PKCE flow; `SyncPort` stub documented. Mocked attestation
+  in CI.
+- **CI:** `mobile` row (users) — version-gate + attestation verify (mocked), no live Apple/Google.
+
+### P29 · AI agent **system-safety** (jailbreak / least-privilege)  🔴 ⭐ (gates production agents)
+- **Scope:** defense-in-depth against a jailbroken / prompt-injected agent **acting on the system**
+  (the "lethal trifecta": private-data access + untrusted content + exfiltration), layered onto the
+  existing ports — **no new infra**. Six BUILD-NOW controls:
+  1. **`AgentPolicy` (least-privilege):** agent identity distinct from the user; per-tenant scoped
+     **capability tokens** (allow/deny tool lists, short TTL); **no raw DB/secret access**;
+     kill-switch. (seam: AuthnPort + AuthorizationPort/P10)
+  2. **MCP tool hardening:** per-tenant tool scoping, **tool-description signature** (anti-poisoning),
+     **strict arg-schema validation**, output PII redaction, **SSRF egress reuse (P1)**. (seam: MCPToolPort/P26)
+  3. **Human-in-the-loop approval** for destructive/irreversible/high-value actions (plan-then-execute,
+     2FA on HIGH/CRITICAL, logged). (seam: AuthorizationPort + AuditPort + NotificationPort)
+  4. **Memory admission control** (anti-MINJA): trust-scored ingestion, consistency check, TTL,
+     causal attribution. (seam: MemoryPort/P24)
+  5. **Per-agent spend caps + runaway-loop detection** (hard 429 at budget; anomaly pause at ≥3×
+     baseline). (seam: MeteringPort/P21 + RateLimitPort/P8)
+  6. **Immutable agent-action audit** (every tool call + cost + risk + injection-score; OTel GenAI
+     span). (seam: AuditPort)
+  Mapped to **OWASP Agentic Top-10 (2025)** + **MITRE ATLAS**.
+- **Toggle/Port:** ships with the agent capability; `AgentPolicy` + the control hooks on existing ports.
+- **Implies/Deps:** an agent framework; P10 (authz), P26 (MCP/guardrails), P1 (SSRF), P21 (spend),
+  audit. **Must land before any production agent with tools/memory** (P22+).
+- **DoD:** an agent cannot call a tool outside its capability list; a destructive action requires
+  approval; a poisoned tool signature is rejected; a budget-exceeded agent gets 429 + pause; every
+  action is audited; threat-sim tests (injection, memory-poison, runaway) pass — all against a
+  **mocked LLM**, ₹0 infra.
+- **CI:** `agent_safety` row — capability-deny, arg-injection-reject, spend-cap, approval-gate tests.
+
+### P30 · Crypto / blockchain payments  🟠 (+ ⚠ India compliance gate)
+- **Scope:** a **`CryptoPaymentAdapter` behind the existing `PaymentsPort`** (Option A — crypto is
+  just another method). Default **self-host BTCPay Server** (non-custodial, **0% fee**, MIT) for
+  BTC/Lightning + **Beldex (BDX)** via its AEON-Pay/BTCPayServer integration; **NOWPayments** +
+  **stablecoins (USDC/USDT on Polygon/Solana)** as the practical low-fee path; **idempotent
+  on-confirmation webhook reuses `ProcessedEvent`** (`(provider,invoice_id,status)` dedupe on N
+  confirmations).
+- **Toggle/Port:** `include_crypto_payments`; `PaymentsPort` crypto adapter, `crypto_provider` setting.
+- **Implies/Deps:** billing/payments. Web3.py for EVM stablecoins; httpx for BTCPay Greenfield / Beldex RPC.
+- **⚠ COMPLIANCE GATE (DECISIONS-NEEDED D14):** India VDA law — **30% tax + 1% TDS**, **mandatory
+  FIU-IND registration** for VDA service providers (PMLA), **FEMA** does *not* recognize crypto as
+  forex (an Indian exporter accepting crypto loses FIRC → GST export benefit), and **privacy coins
+  (Beldex) draw AML scrutiny**. Ship the adapter **off by default** with the compliance caveats
+  documented; enabling it for Indian flows needs counsel.
+- **DoD:** checkout → on-confirmation idempotent webhook → `Subscription`/invoice sync via PaymentsPort;
+  BTCPay + a stablecoin adapter; signature-verified, replay-safe; no-op-when-unconfigured; the
+  compliance caveat surfaced in README + DECISIONS-NEEDED. Mocked chain/webhook in CI.
+- **CI:** `crypto_payments` row (billing) — signature verify + idempotent confirmation, mocked.
+
+---
+
 ## Deliberately deferred (seams exist; do NOT build until a real trigger)
 
 Listed so "not building these" is a *recorded decision*, not an omission ([PRINCIPLES.md#P9](PRINCIPLES.md)):
@@ -324,6 +405,10 @@ Listed so "not building these" is a *recorded decision*, not an omission ([PRINC
 | Managed **memory** (Mem0/Zep) | `MemoryPort` (P24) | entity-extraction/temporal reasoning is a revenue lever |
 | Self-host **Langfuse** cluster | OTLP GenAI seam (P25) | data-residency mandate / team scale |
 | **LangGraph/OpenAI-Agents** as default | `AgentPort` (P22) | a branching/HITL or GPT-committed product |
+| Managed real-time (Ably/Pusher) · Centrifugo | `RealtimePort` (P27) | scale/ops beyond FastAPI-WS+Redis |
+| Offline-first **sync engine** (PowerSync/ElectricSQL) | `SyncPort` (P28) | a mobile service needs offline |
+| Tool **sandbox** infra (Modal/gVisor/E2B) | MCPToolPort (P26/P29) | agents execute untrusted code |
+| Custodial crypto (Coinbase/BitPay) · INR off-ramp | `PaymentsPort` crypto (P30) | a deliberate compliance decision (D14) |
 
 ---
 
@@ -344,6 +429,9 @@ Wave 5 (AI):  P21 LLM-gateway+metering ⭐ (needs P7) ─┐
               P22 AgentRuntime+GenAI-tracing (needs P11 for durable)
               P23 RAG ─► P24 Memory (also needs P11)
               P25 Evals+tracing · P26 Guardrails+prompts+MCP (needs P1/P15/P18)
+Wave 6:       P27 Real-time (needs P5+cache) · P28 Mobile/BFF (needs users+P9)
+              P29 Agent-safety ⭐ (needs P10/P26/P1/P21 — GATES production agents)
+              P30 Crypto payments (needs billing; ⚠ D14 compliance gate)
 ```
 
 Waves 0-1 are parallel-safe; Wave 2 gates Wave 3; Wave 4 is value-ordered and largely independent

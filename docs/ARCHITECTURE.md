@@ -100,6 +100,10 @@ Legend: **status** = ✅ exists · ➕ build-now (this roadmap) · 🔌 seam-now
 | **MemoryPort** (agent memory) | 🔌 | Postgres threads/facts (+pgvector, RLS, TTL) | Mem0 / Zep / Letta | `memory_provider` |
 | **GuardrailPort · PromptPort · MCPToolPort** | 🔌 | instructor + LLM-Guard · Postgres prompt registry · FastMCP + per-tenant scope + SSRF | NeMo · Langfuse prompts · sandboxed/hosted MCP | toggles |
 | **GenAI tracing + evals** | ➕ | OTel GenAI spans (ride OTLP) + DeepEval CI-gate | Langfuse / Phoenix (self-host) | `OTEL_*` / `include_evals` |
+| **RealtimePort** | 🔌 | FastAPI WS/SSE + Redis pub/sub backplane | Centrifugo (self-host) / Ably / Pusher | `realtime_provider` |
+| **Mobile**: MobileConfig · Attestation · SyncPort | 🔌 | version-gate + Play-Integrity/App-Attest verify + APNs; `SyncPort` stub | PowerSync / ElectricSQL (offline sync) | `include_mobile` / `sync_engine` |
+| **AgentPolicy** (agent system-safety) | ➕ | least-privilege capability tokens + HITL + spend cap + audit (hooks on existing ports) | Cerbos (authz) · Lakera (scanning) · SPIFFE (identity) · sandbox | ships with agents |
+| **PaymentsPort — crypto adapter** | 🔌 | BTCPay Server (self-host, non-custodial) + stablecoins; Beldex | NOWPayments / Coinbase Commerce | `crypto_provider` (⚠ D14) |
 
 The catalog is the contract surface: a new phase adds *at most* a port + a default adapter + a
 toggle; it never wires a vendor SDK into a handler. The **AI-native application layer** (LLM gateway,

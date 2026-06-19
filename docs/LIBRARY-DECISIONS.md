@@ -245,3 +245,53 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
 - **Cost:** ≈ ₹0.
 - **Why:** turns the existing probes into an operability posture; light, no new infra.
 - **Swap path:** metrics flow through the existing OTel seam.
+
+## ADR-24 — Real-time updates
+- **Default:** **`RealtimePort` + FastAPI WebSocket/SSE over a Redis pub/sub backplane** (channels
+  per tenant; presence via Redis-TTL; backfill from the P5 outbox).
+- **Alternatives:** **Centrifugo** (BSD, self-host ~₹800/mo) / Soketi (MIT) — the managed-ish seam;
+  **Ably/Pusher** (managed, ₹7.5-50k/mo — 6-10× self-host); Postgres `LISTEN/NOTIFY` (<10k conns, no
+  Redis); NATS/Kafka (premature).
+- **Cost:** Redis backplane ≈ existing infra; managed balloons with connections/messages.
+- **Why:** rides the Redis already in the stack; outbox supplies reliable backfill; managed is a swap
+  when ops/scale demand it.
+- **Swap path:** `RealtimePort` → Centrifugo/Ably adapter.
+
+## ADR-25 — Mobile / BFF backend support
+- **Default:** **BUILD-NOW backend caps** — `MobileConfigPort` (version-gate), an **APNs** adapter
+  (alongside FCM, behind NotificationPort), **app-attestation verify** (Play Integrity / App Attest —
+  free Google/Apple APIs), PKCE + deep links. **`SyncPort` is a SEAM** (stub now).
+- **Alternatives (offline-sync seam):** **PowerSync** (OSS self-host / cloud) · **ElectricSQL**
+  (Postgres-native, open-source) · Replicache/Zero · WatermelonDB-sync. Custodial mobile-auth SaaS — avoid.
+- **Cost:** attestation/version-gate ≈ ₹0; sync engine adds ops/cost only if offline is needed.
+- **Why:** these are cheap, high-value backend capabilities; offline-sync is a heavy, app-driven
+  decision deferred behind a port.
+- **Swap path:** `SyncPort` → PowerSync/ElectricSQL adapter; the app itself is out-of-scope.
+
+## ADR-26 — AI agent system-safety
+- **Default:** **defense-in-depth on the existing ports, ₹0 new infra** — `AgentPolicy`
+  (least-privilege capability tokens) + MCP tool signing/scoping/arg-validation + HITL approval +
+  memory admission control + per-agent spend caps + immutable audit. Input/output scanning via
+  **LLM-Guard** (MIT) + **Llama/Prompt-Guard** (free) + `instructor`.
+- **Alternatives:** **Cerbos** (Apache-2) for agent authz + kill-switch (seam); **Lakera Guard**
+  (managed injection detection, free tier→₹2-5k/mo); **SPIFFE/SPIRE** (agent mTLS identity, self-host);
+  tool **sandbox** (Modal/gVisor/E2B) only if agents run untrusted code.
+- **Cost:** MVP ≈ ₹0 (OSS + Postgres/Redis tables); managed scanners/sandbox optional at scale.
+- **Why:** jailbroken agents are a *live* 2025-2026 threat (OWASP Agentic Top-10, MITRE ATLAS); the
+  controls are cheap now and catastrophic to retrofit after an incident. **Build before production agents.**
+- **Swap path:** each control is a hook on an existing port → Cerbos/Lakera/SPIFFE/sandbox adapters later.
+
+## ADR-27 — Crypto / blockchain payments
+- **Default:** **`CryptoPaymentAdapter` behind `PaymentsPort`** — self-host **BTCPay Server**
+  (non-custodial, **0% fee**, MIT) for BTC/Lightning + **Beldex (BDX)** via AEON-Pay/BTCPayServer;
+  **NOWPayments** (non-custodial, ~0.5%, 350+ coins) + **stablecoins USDC/USDT on Polygon/Solana**
+  (fees ~$0.0004-0.002) for the practical path; idempotent on-confirmation webhook reuses `ProcessedEvent`.
+- **Alternatives:** Coinbase Commerce / BitPay (custodial, 1-2%, US-domiciled — lock-in/FEMA risk);
+  CoinGate (fiat payout); OpenNode (BTC/LN).
+- **Cost:** BTCPay ≈ $240/yr VPS + 0%; NOWPayments 0.5% — vs Stripe/Razorpay 2-3% (5-6× cheaper
+  processing, you own hosting ops).
+- **Why:** crypto is ~5-6× cheaper to process and chargeback-free; BTCPay is the license-clean,
+  non-custodial, self-host default; stablecoins avoid volatility. **But India VDA/FEMA/FIU rules make
+  this a deliberate compliance decision (D14) — ship off-by-default.**
+- **Swap path:** `crypto_provider` setting → BTCPay / NOWPayments / Coinbase adapters; `PaymentsPort`
+  unchanged.
