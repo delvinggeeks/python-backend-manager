@@ -57,6 +57,10 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
 - `docs/CURRENT-STATE.md` — the inventory as of the spec.
 
 **Engineering-discipline layer (HOW each phase is built — full SDLC, every phase obeys these):**
+- `docs/BUILD-SYSTEM.md` — the **agentic build & assurance system**: the 7-gate per-phase pipeline
+  (Ready→Build→Quality→Test/edge→**skeptical adversarial review**→DoD/trace→Merge), the parent-builds /
+  subagents-review split, the real-use-case + edge-matrix + property/fuzz/mutation testing, and a
+  reference Workflow that fans out a diverse-lens adversarial panel + `build-judge`. Rigor scaled to risk.
 - `docs/SDLC.md` — the lifecycle discipline: the **per-phase artifact set** + Definition-of-Ready /
   Definition-of-Done gates. A phase is NOT done until its design + threat model + tests + traceability
   rows + runbook + SLO merge with the code. Lean-by-team-size; never skip the gates.

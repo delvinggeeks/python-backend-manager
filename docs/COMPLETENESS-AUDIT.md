@@ -126,6 +126,7 @@
 ## K · Engineering discipline (how it's built)
 | Subsystem | Status |
 |---|---|
+| **Agentic build system** (7-gate pipeline + adversarial review panel + Workflow orchestration) | 📋 [BUILD-SYSTEM.md](BUILD-SYSTEM.md) |
 | SDLC process + per-phase artifact gates | 📋 [SDLC.md](SDLC.md) |
 | Requirements traceability matrix | 📋 [TRACEABILITY.md](TRACEABILITY.md) |
 | System/component design — C4 + sequence + ER | 📋 [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md) |
