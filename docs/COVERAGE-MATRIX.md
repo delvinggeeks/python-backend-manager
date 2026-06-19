@@ -118,7 +118,18 @@
 | Web frontend / SPA | ⛔ | frontend |
 | i18n / l10n + multi-currency | ➖ | deferred; multi-currency via payments port |
 
-## 12 · Growth / business (mostly external SaaS, not template code)
+## 12 · Engineering discipline / SDLC (how it's built — full traceability)
+| Subsystem | Status | Where |
+|---|---|---|
+| SDLC process + per-phase artifact gates (DoR/DoD) | 📋 | [SDLC.md](SDLC.md) |
+| Requirements traceability matrix (req→component→test→deploy→SLO) | 📋 | [TRACEABILITY.md](TRACEABILITY.md) |
+| System/component design — C4 + sequence + ER (diagrams-as-code) | 📋 | [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md) |
+| CI/CD + DevSecOps gates (SAST/SCA/secret/SBOM/sign/SLSA) | ✅/📋 | [CICD-PIPELINE.md](CICD-PIPELINE.md) (P2) |
+| Deployment topology + networking + IaC (cloud/hybrid/self-host) | 📋 | [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) |
+| Custom MCP servers (FastMCP, OAuth2.1, per-tenant) | 📋 | [MCP-SERVERS.md](MCP-SERVERS.md) |
+| Threat modeling (STRIDE per component) · ADRs · contract tests · SLOs | 📋 | SDLC.md + per-phase |
+
+## 13 · Growth / business (mostly external SaaS, not template code)
 | Subsystem | Status | Where |
 |---|---|---|
 | Product analytics (PostHog) | ➖ | seam via FeatureFlagPort/events; mostly external |

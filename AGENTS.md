@@ -53,6 +53,21 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
   explicitly rejected — don't build the deferred items without a real trigger).
 - `docs/COVERAGE-MATRIX.md` — the 360° subsystem checklist (shipped / spec'd / adding / gap / out-of-scope).
 - `docs/CURRENT-STATE.md` — the inventory as of the spec.
+
+**Engineering-discipline layer (HOW each phase is built — full SDLC, every phase obeys these):**
+- `docs/SDLC.md` — the lifecycle discipline: the **per-phase artifact set** + Definition-of-Ready /
+  Definition-of-Done gates. A phase is NOT done until its design + threat model + tests + traceability
+  rows + runbook + SLO merge with the code. Lean-by-team-size; never skip the gates.
+- `docs/TRACEABILITY.md` — the living **requirements-traceability matrix** (requirement → component →
+  test → CI gate → deploy → SLO), machine-checked in CI. The master phase→trace table lives here.
+- `docs/SYSTEM-DESIGN.md` — platform **C4 + sequence + ER diagrams** (Mermaid, diagrams-as-code); each
+  phase ships its own component/sequence/ER-delta diagrams in the same notation.
+- `docs/CICD-PIPELINE.md` — the CI/CD stages + **DevSecOps gates** (secret-scan/SAST/SCA/SBOM/sign/SLSA)
+  wrapping the existing capability gate.
+- `docs/INFRA-TOPOLOGY.md` — cloud / hybrid / self-host **deployment routes + networking + IaC**, staged
+  by growth; India-residency (DPDP) constraints.
+- `docs/MCP-SERVERS.md` — building **custom MCP servers** (FastMCP, Streamable HTTP, OAuth2.1, per-tenant);
+  safety ties to P29/P26.
 - `docs/DECISIONS-NEEDED.md` — founder-input calls; proceed on the recommended defaults unless told
   otherwise.
 

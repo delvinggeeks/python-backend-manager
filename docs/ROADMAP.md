@@ -13,6 +13,12 @@ Per-phase fields: **Scope · Toggle/Port · Implies/Deps · Definition-of-done �
 validation**. "CI rows" are additions to the `generate (capability)` matrix (the gate aggregates
 them automatically — no branch-protection change).
 
+> **Every phase also obeys the full SDLC discipline** in [SDLC.md](SDLC.md): it ships its per-phase
+> artifact set (requirements + RTM rows, C4/sequence/ER-delta diagrams, STRIDE threat model, test
+> pyramid + port contract tests, DevSecOps gates, IaC/deploy note, runbook, SLO) and appends to the
+> [TRACEABILITY.md](TRACEABILITY.md) matrix — the Definition-of-Done blocks the squash-merge until that
+> trace is complete and CI-verified. The scope lines below are the *deltas*; the discipline is inherited.
+
 ---
 
 ## Wave 0 — near-free hardening (no behavior change; fast, low-risk)
