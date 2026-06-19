@@ -1,0 +1,124 @@
+"""Background-jobs tests — the enqueue seam and task execution, with NO live Redis.
+
+The arq pool is replaced by an in-memory fake, so we assert (a) ``enqueue`` submits the right
+job and (b) task functions produce the right effect when called directly. Requires the `worker`
+extra.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from redis.exceptions import RedisError
+
+from app.jobs import queue, tasks
+from app.jobs.worker import WorkerSettings
+
+
+class _FakePool:
+    """Stand-in for the arq Redis pool: records enqueue_job calls instead of hitting Redis."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def enqueue_job(self, function: str, *args: Any, **kwargs: Any) -> None:
+        self.jobs.append((function, args, kwargs))
+
+
+@pytest.fixture
+def fake_pool(monkeypatch: pytest.MonkeyPatch) -> _FakePool:
+    """Patch the enqueue seam's pool getter so enqueue() records instead of touching Redis."""
+    pool = _FakePool()
+
+    async def _get_pool() -> _FakePool:
+        return pool
+
+    monkeypatch.setattr(queue, "get_pool", _get_pool)
+    return pool
+
+
+async def test_enqueue_submits_job_to_pool(fake_pool: _FakePool) -> None:
+    await queue.enqueue("example_task", 21)
+    assert fake_pool.jobs == [("example_task", (21,), {})]
+
+
+async def test_enqueue_forwards_args_and_kwargs(fake_pool: _FakePool) -> None:
+    await queue.enqueue("noop_task", 1, 2, flag=True)
+    function, args, kwargs = fake_pool.jobs[0]
+    assert function == "noop_task"
+    assert args == (1, 2)
+    assert kwargs == {"flag": True}
+
+
+async def test_enqueue_is_best_effort_when_backend_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A queue outage must not break the request that scheduled the job: enqueue swallows an
+    # unreachable Redis (logging it) and reports False instead of raising. This is what keeps
+    # registration / password-reset working when jobs+email are on but Redis is down.
+    async def _broken_pool() -> Any:
+        raise RedisError("redis unreachable")
+
+    monkeypatch.setattr(queue, "get_pool", _broken_pool)
+    assert await queue.enqueue("example_task", 1) is False
+
+
+async def test_example_task_runs_and_returns_effect() -> None:
+    # Call the task directly with a stub arq context — no worker, no Redis.
+    result = await tasks.example_task({}, 21)
+    assert result == 42
+
+
+def test_worker_registers_functions_and_a_cron_schedule() -> None:
+    assert tasks.example_task in WorkerSettings.functions
+    assert WorkerSettings.cron_jobs  # at least one recurring job is scheduled
+    assert WorkerSettings.redis_settings is not None
+{% if include_email %}
+
+
+async def test_send_email_task_dispatches_through_the_email_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The worker-side email task forwards to the EmailPort send helper; capture, don't send.
+    sent: list[dict[str, Any]] = []
+
+    async def _capture(provider: Any, **kwargs: Any) -> None:
+        sent.append(kwargs)
+
+    monkeypatch.setattr("app.email.send.send_template", _capture)
+    await tasks.send_email_task(
+        {},
+        to="new@example.com",
+        subject="Welcome",
+        template="welcome",
+        context={"email": "new@example.com"},
+    )
+    assert sent[0]["to"] == "new@example.com"
+    assert sent[0]["template"] == "welcome"
+
+
+async def test_user_manager_enqueues_welcome_instead_of_sending_inline(
+    fake_pool: _FakePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With jobs + email both on, on_after_register ENQUEUES the welcome email rather than
+    # sending it inline — so a slow/failing provider can't delay or break registration.
+    from app.users.manager import UserManager
+
+    def _fail_inline() -> Any:
+        raise AssertionError("email must be enqueued, not sent inline")
+
+    # If the inline path ran it would resolve the provider and blow up here.
+    monkeypatch.setattr("app.email.provider.get_email_provider", _fail_inline)
+
+    class _User:
+        email = "new@example.com"
+
+    manager = UserManager.__new__(UserManager)  # skip DB wiring; the hook needs no state
+    await manager.on_after_register(_User())  # type: ignore[arg-type]
+
+    function, _args, kwargs = fake_pool.jobs[0]
+    assert function == "send_email_task"
+    assert kwargs["to"] == "new@example.com"
+    assert kwargs["template"] == "welcome"
+{% endif %}

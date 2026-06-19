@@ -1,0 +1,44 @@
+"""Background task functions — the units of work the arq worker runs.
+
+Each is a plain async function ``(ctx, ...)`` where ``ctx`` is arq's job context. They are
+registered in :class:`app.jobs.worker.WorkerSettings` and invoked either by an enqueue
+(:func:`app.jobs.queue.enqueue`) or by the cron schedule. Importing this module opens no
+connections, so tasks can be unit-tested by calling them directly. Requires the `worker` extra.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
+
+
+async def example_task(ctx: dict[str, Any], value: int) -> int:
+    """A trivial example task: double a number. Replace with real background work."""
+    log.info("jobs.example_task", value=value)
+    return value * 2
+{% if include_email %}
+
+
+async def send_email_task(
+    ctx: dict[str, Any],
+    *,
+    to: str | list[str],
+    subject: str,
+    template: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Send a templated email from the worker — the enqueued counterpart of an inline send.
+
+    Routing mail through the queue means a slow or failing provider can't delay or break the
+    request that triggered it. The body is rendered and delivered via the same EmailPort seam.
+    """
+    from app.email.provider import get_email_provider
+    from app.email.send import send_template
+
+    await send_template(
+        get_email_provider(), to=to, subject=subject, template=template, context=context
+    )
+{% endif %}

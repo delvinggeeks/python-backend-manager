@@ -1,0 +1,52 @@
+"""arq worker entrypoint — run with ``arq app.jobs.worker.WorkerSettings`` (or ``just worker``).
+
+:class:`WorkerSettings` is what arq reads at startup: the task functions it may run, the cron
+schedule for recurring jobs, and the Redis connection (shared with the enqueue seam). Importing
+this module opens NO Redis connection — ``RedisSettings`` is just config — so it is safe to import
+in tests. Requires the `worker` extra (arq) + a reachable REDIS_URL at run time.
+"""
+
+from __future__ import annotations
+
+from typing import Any, ClassVar
+
+from arq import cron
+from arq.connections import RedisSettings
+
+from app.core.logging import configure_logging, get_logger
+from app.jobs.queue import redis_settings as build_redis_settings
+from app.jobs.tasks import example_task{% if include_email %}, send_email_task{% endif +%}
+
+log = get_logger(__name__)
+
+
+async def heartbeat(ctx: dict[str, Any]) -> None:
+    """Example recurring job — arq's cron runs it on the schedule in WorkerSettings."""
+    log.info("jobs.heartbeat")
+
+
+async def startup(ctx: dict[str, Any]) -> None:
+    """Worker process startup — configure structured logging like the API does."""
+    configure_logging()
+    log.info("worker.startup")
+
+
+async def shutdown(ctx: dict[str, Any]) -> None:
+    """Worker process shutdown."""
+    log.info("worker.shutdown")
+
+
+class WorkerSettings:
+    """arq reads these attributes when the worker boots."""
+
+    functions: ClassVar[list[Any]] = [
+        example_task,
+{% if include_email %}
+        send_email_task,
+{% endif %}
+    ]
+    # Recurring schedule (arq cron) — this example runs every 5 minutes.
+    cron_jobs: ClassVar[list[Any]] = [cron(heartbeat, minute=set(range(0, 60, 5)))]
+    redis_settings: RedisSettings = build_redis_settings()
+    on_startup = staticmethod(startup)
+    on_shutdown = staticmethod(shutdown)

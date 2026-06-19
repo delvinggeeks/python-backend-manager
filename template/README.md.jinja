@@ -51,6 +51,7 @@ src/app/
   db/              # async SQLAlchemy session + models (db extra)
   schemas/         # shared pydantic models
 {% if include_email %}  email/           # provider-agnostic EmailPort + SMTP/SES adapters + templates (email extra)
+{% endif %}{% if include_jobs %}  jobs/            # arq worker + enqueue seam + tasks + cron schedule (worker extra)
 {% endif %}tests/
 ```
 
@@ -177,6 +178,32 @@ provider's credentials per environment — never hard-coded:
 `app.email.provider`, and add its key to the `email_provider` choices — see AGENTS.md.
 {% if include_users %}The user manager sends a **welcome** email on registration and a
 **password-reset** email on a reset request, rendered from these templates.{% endif %}
+
+{% endif %}
+{% if include_jobs %}
+## Background jobs & scheduler (arq)
+
+Long-running or fire-and-forget work runs **out of band** on an
+[arq](https://arq-docs.helpmanual.io/) worker backed by Redis, so the request never waits on it.
+Call sites enqueue through a thin seam and never import arq:
+
+```python
+from app.jobs.queue import enqueue
+
+await enqueue("example_task", 21)   # the worker runs example_task(ctx, 21)
+```
+
+- **Worker:** `just worker` (runs `arq app.jobs.worker.WorkerSettings`) — needs `REDIS_URL`; run
+  it as a second process alongside `just run`.
+- **Tasks** live in `app.jobs.tasks`; register a new one in `WorkerSettings.functions`.
+- **Recurring jobs** use arq's built-in **cron** (no extra dependency): the example `heartbeat`
+  runs every 5 minutes — see `WorkerSettings.cron_jobs`.
+
+arq is used **directly**, not behind a runtime port — the queue/scheduler is an infrastructure
+choice, not a swappable vendor, so abstracting it would be over-engineering.
+{% if include_email %}When the email capability is on, the user manager's **welcome** and
+**password-reset** emails are **enqueued** (`send_email_task`) instead of sent inline, so a slow
+or failing email provider can't delay or break registration / reset requests.{% endif %}
 
 {% endif %}
 {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}

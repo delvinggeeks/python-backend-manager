@@ -45,6 +45,13 @@ docker-build:
 
 docker-up:
     docker compose up --build
+{% if include_jobs %}
+
+# Background worker (arq) — processes the jobs queue + runs the cron schedule.
+# Needs Redis (REDIS_URL); run it alongside `just run`.
+worker:
+    uv run arq app.jobs.worker.WorkerSettings
+{% endif %}
 {% if include_db or include_users or include_api_keys or include_billing %}
 
 # Database migrations (Alembic) — DB-backed services only.
