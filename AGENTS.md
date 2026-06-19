@@ -35,7 +35,25 @@ Every command in `.claude/commands/` must have: a one-line `description`, an
 verb-first, intent-obvious name. If the command set grows beyond ~6, group by namespace
 folders — `commands/db/migrate.md` → `/db:migrate`.
 
+## Platform spec — the build-out source of truth (`docs/`)
+The platform is being hardened into a full SaaS backend via a researched, phased plan. Before
+building any new subsystem, **read `docs/` — it is canonical and overrides ad-hoc choices:**
+- `docs/PRINCIPLES.md` — cross-cutting laws **every phase inherits** (ports-vs-toggles, gated
+  byte-identity, the P3 edge-validation matrix, best-effort/no-op, idempotency, defense-in-depth,
+  cost-effective self-hostable defaults). A phase spec lists only its deltas; it inherits these.
+- `docs/ROADMAP.md` — the ordered, dependency-sequenced phases. **Build in order; one `feat:` PR per
+  phase**, each gated by the existing `generate (capability)` matrix (add the phase's CI row(s)).
+- `docs/LIBRARY-DECISIONS.md` — the chosen default lib/provider per subsystem + the swap path (port).
+  Don't re-litigate a decision; if you must, update the ADR.
+- `docs/ARCHITECTURE.md` — target architecture + the port-adapter catalog (the seam contracts).
+- `docs/GAP-ANALYSIS.md` — what's BUILD-NOW vs SEAM-NOW vs FINE-AS-IS, and why (incl. gold-plating
+  explicitly rejected — don't build the deferred items without a real trigger).
+- `docs/CURRENT-STATE.md` — the inventory as of the spec.
+- `docs/DECISIONS-NEEDED.md` — founder-input calls; proceed on the recommended defaults unless told
+  otherwise.
+
 ## Where to look
 - `copier.yml` — the questions + computed extras.
 - `template/AGENTS.md` — the conventions that ship INTO each generated service.
 - `README.md` — full pipeline + GitHub setup.
+- `docs/` — the platform spec set (above): principles, architecture, library ADRs, roadmap.
