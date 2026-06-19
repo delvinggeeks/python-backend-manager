@@ -194,9 +194,15 @@ jobs:
           uv run mypy src
           uv run pytest
           # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
-          export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
-          uv run alembic upgrade head
-          uv run alembic downgrade base
+          # Only db-backed services render alembic.ini (and install alembic); a db-less capability
+          # (e.g. observability alone) has no migrations, so skip the round-trip there.
+          if [ -f alembic.ini ]; then
+            export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
+            uv run alembic upgrade head
+            uv run alembic downgrade base
+          else
+            echo "no alembic.ini (db-less capability) — skipping migration round-trip"
+          fi
 
   # Single STABLE required status check that gates auto-merge on the whole capability
   # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
