@@ -35,7 +35,54 @@ Every command in `.claude/commands/` must have: a one-line `description`, an
 verb-first, intent-obvious name. If the command set grows beyond ~6, group by namespace
 folders — `commands/db/migrate.md` → `/db:migrate`.
 
+## Platform spec — the build-out source of truth (`docs/`)
+The platform is being hardened into a full SaaS backend via a researched, phased plan. Before
+building any new subsystem, **read `docs/` — it is canonical and overrides ad-hoc choices:**
+- `docs/PRINCIPLES.md` — cross-cutting laws **every phase inherits** (ports-vs-toggles, gated
+  byte-identity, the P3 edge-validation matrix, best-effort/no-op, idempotency, defense-in-depth,
+  cost-effective self-hostable defaults). A phase spec lists only its deltas; it inherits these.
+- `docs/ROADMAP.md` — the ordered, dependency-sequenced phases. **Build in order; one `feat:` PR per
+  phase**, each gated by the existing `generate (capability)` matrix (add the phase's CI row(s)).
+- `docs/LIBRARY-DECISIONS.md` — the chosen default lib/provider per subsystem + the swap path (port).
+  Don't re-litigate a decision; if you must, update the ADR.
+- `docs/ARCHITECTURE.md` — target architecture + the port-adapter catalog (the seam contracts).
+- `docs/AI-AGENTIC-STACK.md` — the AI-native application layer (LLM gateway + token metering, agent
+  runtime, RAG, memory, evals/tracing, guardrails/MCP-safety); the AI counterpart to LIBRARY-DECISIONS,
+  sequenced as ROADMAP Wave 5. Its defining seam: token-usage → `MeteringPort` (AI cost = billable unit).
+- `docs/GAP-ANALYSIS.md` — what's BUILD-NOW vs SEAM-NOW vs FINE-AS-IS, and why (incl. gold-plating
+  explicitly rejected — don't build the deferred items without a real trigger).
+- `docs/COVERAGE-MATRIX.md` — the 360° subsystem checklist (shipped / spec'd / adding / gap / out-of-scope).
+- `docs/COMPLETENESS-AUDIT.md` — the adversarial *no-gaps proof*: every backend subsystem (A-K) specced,
+  or (L) consciously out-of-scope with reasoning. A living audit — a new subsystem becomes a phase.
+- `docs/CURRENT-STATE.md` — the inventory as of the spec.
+
+**Engineering-discipline layer (HOW each phase is built — full SDLC, every phase obeys these):**
+- `docs/BUILD-SYSTEM.md` — the **agentic build & assurance system**: the 7-gate per-phase pipeline
+  (Ready→Build→Quality→Test/edge→**skeptical adversarial review**→DoD/trace→Merge), the parent-builds /
+  subagents-review split, the real-use-case + edge-matrix + property/fuzz/mutation testing, and a
+  reference Workflow that fans out a diverse-lens adversarial panel + `build-judge`. Rigor scaled to risk.
+- `docs/SDLC.md` — the lifecycle discipline: the **per-phase artifact set** + Definition-of-Ready /
+  Definition-of-Done gates. A phase is NOT done until its design + threat model + tests + traceability
+  rows + runbook + SLO merge with the code. Lean-by-team-size; never skip the gates.
+- `docs/TRACEABILITY.md` — the living **requirements-traceability matrix** (requirement → component →
+  test → CI gate → deploy → SLO), machine-checked in CI. The master phase→trace table lives here.
+- `docs/SYSTEM-DESIGN.md` — platform **C4 + sequence + ER diagrams** (Mermaid, diagrams-as-code); each
+  phase ships its own component/sequence/ER-delta diagrams in the same notation.
+- `docs/CICD-PIPELINE.md` — the CI/CD stages + **DevSecOps gates** (secret-scan/SAST/SCA/SBOM/sign/SLSA)
+  wrapping the existing capability gate.
+- `docs/CODE-QUALITY.md` — the **code-quality + coverage + deterministic-code** gates (ruff/mypy-strict +
+  import-linter architecture enforcement + complexity/dead-code/docstring + patch-coverage; Hypothesis/
+  Schemathesis/mutmut; pytest-randomly + freezegun + reproducible builds). Python-native stack > SonarQube
+  for this scope (ADR-36). It's the quality half of P2; every phase inherits it.
+- `docs/INFRA-TOPOLOGY.md` — cloud / hybrid / self-host **deployment routes + networking + IaC**, staged
+  by growth; India-residency (DPDP) constraints.
+- `docs/MCP-SERVERS.md` — building **custom MCP servers** (FastMCP, Streamable HTTP, OAuth2.1, per-tenant);
+  safety ties to P29/P26.
+- `docs/DECISIONS-NEEDED.md` — founder-input calls; proceed on the recommended defaults unless told
+  otherwise.
+
 ## Where to look
 - `copier.yml` — the questions + computed extras.
 - `template/AGENTS.md` — the conventions that ship INTO each generated service.
 - `README.md` — full pipeline + GitHub setup.
+- `docs/` — the platform spec set (above): principles, architecture, library ADRs, roadmap.
