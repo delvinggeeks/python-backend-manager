@@ -23,6 +23,7 @@ async def test_metrics_endpoint(client):
 
 def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
     from fastapi import FastAPI
+    from starlette.testclient import TestClient
 
     from app.core.config import get_settings
     from app.observability import setup_observability
@@ -33,8 +34,13 @@ def test_setup_observability_noops_without_otlp_endpoint(monkeypatch):
     try:
         enabled = setup_observability(app)
         assert enabled is False  # nothing exports without a configured endpoint
-        paths = {route.path for route in app.routes}
-        assert {"/healthz", "/readyz", "/metrics"} <= paths
+        # The three endpoints are mounted and serve. We probe them rather than introspect
+        # app.routes: FastAPI nests included-router routes behind an _IncludedRouter whose
+        # .path attribute doesn't exist, so route-set introspection is unreliable.
+        with TestClient(app) as probe:
+            assert probe.get("/healthz").status_code == 200
+            assert probe.get("/metrics").status_code == 200
+            assert probe.get("/readyz").status_code in (200, 503)
     finally:
         get_settings.cache_clear()
 
