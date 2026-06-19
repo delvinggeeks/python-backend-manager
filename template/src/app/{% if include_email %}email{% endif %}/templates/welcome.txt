@@ -1,0 +1,7 @@
+Welcome to {{ project_name }}!
+
+Hi {{ email }},
+
+Your account is ready — we're glad you're here.
+
+— The {{ project_name }} team

@@ -129,6 +129,13 @@ jobs:
           # tenant-prefixed path + membership dependency are covered and the alembic
           # round-trip below is meaningful. The plain-key path is unit-tested in-module.
           - { capability: storage,  data: "--data include_storage=true --data include_tenancy=true", extras: "--extra db --extra users --extra storage" }
+          # Email is db-independent, but we exercise it WITH users so the welcome +
+          # password-reset hooks in the user manager are wired and compiled and the alembic
+          # round-trip below (over the users migration) is meaningful. Both adapters run: the
+          # second row flips email_provider=ses, so the shared EmailPort contract test covers
+          # SMTP *and* SES — exactly like billing + billing_razorpay (one matrix, not a leg).
+          - { capability: email,     data: "--data include_email=true --data include_users=true", extras: "--extra db --extra users --extra email" }
+          - { capability: email_ses, data: "--data include_email=true --data include_users=true --data email_provider=ses", extras: "--extra db --extra users --extra email" }
     steps:
       - uses: actions/checkout@v6
         with:

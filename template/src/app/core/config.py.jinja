@@ -92,6 +92,33 @@ class Settings(BaseSettings):
     s3_secret_access_key: str | None = None
     s3_presign_expiry_seconds: int = 3600
 {% endif %}
+{% if include_email %}
+
+    # --- Email / notifications (only used if the `email` extra is installed) ---
+    #     Provider-agnostic: `email_provider` selects the adapter `app.email.provider` returns;
+    #     the app speaks only EmailPort. Override EMAIL_PROVIDER per environment; set
+    #     EMAIL_SUPPRESS_SEND=true (or EMAIL_PROVIDER=console) so nothing actually sends in dev.
+    email_provider: Literal["smtp", "ses", "console"] = "{{ email_provider }}"
+    email_suppress_send: bool = False
+    email_from_address: str = "no-reply@localhost"
+    email_from_name: str = "{{ project_name }}"
+
+    # SMTP (used when email_provider == "smtp"; e.g. Zoho / Microsoft 365). STARTTLS on 587.
+    # Unconfigured (no SMTP_HOST) -> nothing sends, so a dev env never blocks on email.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_start_tls: bool = True
+    smtp_use_tls: bool = False
+
+    # Amazon SES via the AWS API (used when email_provider == "ses"; pairs with S3 storage).
+    # Unconfigured (no access keys) -> nothing sends. Leave `ses_endpoint_url=None` for AWS.
+    ses_region: str = "us-east-1"
+    ses_access_key_id: str | None = None
+    ses_secret_access_key: str | None = None
+    ses_endpoint_url: str | None = None
+{% endif %}
 
     @property
     def is_production(self) -> bool:

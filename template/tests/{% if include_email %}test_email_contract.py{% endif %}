@@ -1,0 +1,150 @@
+"""ONE shared EmailPort contract both adapters must satisfy — so they can't drift.
+
+Mirrors the PaymentsPort contract pattern: a single parametrized ``case`` fixture yields the SAME
+assertions against every adapter (SMTP + Amazon SES), each wired to a FAKE transport — no live
+SMTP, no live AWS, no credentials. If a future adapter (or an edit to an existing one) breaks the
+port shape or drops a recipient / subject / body, every leg here fails identically. Adapter
+edge cases live in ``test_email.py``.
+
+Requires the `email` extra. mypy does not type-check tests, so the fakes stay light.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from app.core.config import Settings
+from app.email.adapters import SESAdapter, SMTPAdapter
+from app.email.ports import EmailMessage, EmailPort
+
+_TO = "rcpt@example.com"
+_SUBJECT = "Your receipt"
+_HTML = "<p>Thanks for your order.</p>"
+_TEXT = "Thanks for your order."
+
+
+@dataclass
+class _Captured:
+    """What a fake transport actually transmitted, normalized for the shared assertions."""
+
+    to: list[str]
+    subject: str
+    html: str | None
+    text: str | None
+
+
+@dataclass
+class _Case:
+    name: str
+    adapter: EmailPort
+    captured: Callable[[], _Captured]
+
+
+def _smtp_case() -> _Case:
+    sent: list[Any] = []
+
+    async def fake_send(message: Any, **kwargs: Any) -> None:
+        sent.append(message)
+
+    settings = Settings(
+        email_provider="smtp",
+        smtp_host="smtp.test",
+        smtp_username="user",
+        smtp_password="pass",
+        email_from_address="no-reply@test",
+        email_from_name="Test",
+    )
+    adapter = SMTPAdapter(sender=fake_send, settings=settings)
+
+    def captured() -> _Captured:
+        mime = sent[-1]
+        to = [addr.strip() for addr in mime["To"].split(",")]
+        html: str | None = None
+        text: str | None = None
+        for part in mime.walk():
+            content_type = part.get_content_type()
+            if content_type == "text/html":
+                html = part.get_content().rstrip("\n")
+            elif content_type == "text/plain":
+                text = part.get_content().rstrip("\n")
+        return _Captured(to=to, subject=mime["Subject"], html=html, text=text)
+
+    return _Case(name="smtp", adapter=adapter, captured=captured)
+
+
+def _ses_case() -> _Case:
+    sent: list[dict[str, Any]] = []
+
+    class _FakeSesClient:
+        async def __aenter__(self) -> _FakeSesClient:
+            return self
+
+        async def __aexit__(self, *exc: Any) -> bool:
+            return False
+
+        async def send_email(self, **kwargs: Any) -> dict[str, str]:
+            sent.append(kwargs)
+            return {"MessageId": "m-1"}
+
+    class _FakeSession:
+        def client(self, service: str, **kwargs: Any) -> _FakeSesClient:
+            return _FakeSesClient()
+
+    settings = Settings(
+        email_provider="ses",
+        ses_region="us-east-1",
+        ses_access_key_id="AKIA_TEST",
+        ses_secret_access_key="secret",
+        email_from_address="no-reply@test",
+        email_from_name="Test",
+    )
+    adapter = SESAdapter(session=_FakeSession(), settings=settings)
+
+    def captured() -> _Captured:
+        call = sent[-1]
+        content = call["Content"]["Simple"]
+        body = content["Body"]
+        return _Captured(
+            to=list(call["Destination"]["ToAddresses"]),
+            subject=content["Subject"]["Data"],
+            html=body["Html"]["Data"] if "Html" in body else None,
+            text=body["Text"]["Data"] if "Text" in body else None,
+        )
+
+    return _Case(name="ses", adapter=adapter, captured=captured)
+
+
+@pytest.fixture(params=["smtp", "ses"])
+def case(request: pytest.FixtureRequest) -> _Case:
+    # A fresh adapter + fake per test, so no state leaks between the two legs.
+    return {"smtp": _smtp_case, "ses": _ses_case}[request.param]()
+
+
+# --- The shared contract: identical assertions for BOTH adapters ----------------------------
+def test_adapter_satisfies_email_port(case: _Case) -> None:
+    # runtime_checkable structural check: the required member is present.
+    assert isinstance(case.adapter, EmailPort)
+
+
+def test_provider_identity_is_set(case: _Case) -> None:
+    assert isinstance(case.adapter.name, str)
+    assert case.adapter.name
+
+
+async def test_send_transmits_recipient_subject_and_body(case: _Case) -> None:
+    await case.adapter.send(EmailMessage(to=_TO, subject=_SUBJECT, html=_HTML, text=_TEXT))
+    captured = case.captured()
+    assert captured.to == [_TO]
+    assert captured.subject == _SUBJECT
+    assert captured.html == _HTML
+    assert captured.text == _TEXT
+
+
+async def test_send_normalizes_multiple_recipients(case: _Case) -> None:
+    recipients = ["a@example.com", "b@example.com"]
+    await case.adapter.send(EmailMessage(to=recipients, subject="Hi", text="hello"))
+    assert case.captured().to == recipients

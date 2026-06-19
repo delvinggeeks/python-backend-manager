@@ -172,6 +172,29 @@ include_storage:
     plain otherwise. Implies the `storage` extra (aioboto3); no database required.
   default: false
 
+include_email:
+  type: bool
+  help: >-
+    Scaffold provider-agnostic email / notifications: an `app/email` package with a hexagonal
+    EmailPort, swappable SMTP (aiosmtplib) + Amazon SES (aioboto3) adapters (pick the active one
+    below), a console/suppress dev backend so nothing sends unconfigured, jinja2 body templates,
+    and a typed send helper. Welcome + password-reset emails wire into the users flow when the
+    users capability is on. Implies the `email` extra (both adapters' SDKs + jinja2); no database
+    required.
+  default: false
+
+email_provider:
+  type: str
+  help: >-
+    Active email provider for this service. Both adapters ship; this picks the default one
+    (override at runtime with EMAIL_PROVIDER, or set EMAIL_SUPPRESS_SEND=true in dev). SMTP suits
+    Zoho / Microsoft 365; SES pairs with S3-compatible storage.
+  choices:
+    - smtp
+    - ses
+  default: smtp
+  when: "{{ include_email }}"
+
 saas_extras:
   type: str
   help: >-
@@ -211,6 +234,7 @@ sync_extras:
     {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
+    {% if include_email %}{% if 'email' not in parts %}{% set _ = parts.append('email') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

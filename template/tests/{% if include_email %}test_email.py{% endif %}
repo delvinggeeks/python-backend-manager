@@ -1,0 +1,97 @@
+"""Captured/suppressed email backend + the typed send helper — no real SMTP/HTTP, no creds.
+
+Exercises the send path end-to-end against the credential-free ``ConsoleEmailAdapter``: the typed
+helper renders a named jinja2 template + context and the captured message carries the right
+recipient, subject, and rendered body. Per-adapter edges live here too — a body-less message is a
+usage error, and an unconfigured SMTP/SES provider suppresses (logs + skips) instead of raising,
+so a fresh dev environment never blocks on mail. The shared port contract is in
+``test_email_contract.py``. Requires the `email` extra; needs no database, network, or secrets.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from app.core.config import Settings
+from app.email.adapters import ConsoleEmailAdapter, SESAdapter, SMTPAdapter
+from app.email.ports import EmailError, EmailMessage
+from app.email.send import render_message, send, send_template
+
+_CONTEXT = {"email": "new@example.com", "project_name": "Acme", "token": "tok-abc-123"}
+
+
+async def test_console_adapter_captures_message() -> None:
+    port = ConsoleEmailAdapter()
+    await send(port, EmailMessage(to="u@example.com", subject="Hi", html="<p>x</p>", text="x"))
+    assert len(port.sent) == 1
+    assert port.sent[0].recipients() == ["u@example.com"]
+    assert port.sent[0].subject == "Hi"
+
+
+async def test_send_template_renders_named_template_into_body() -> None:
+    port = ConsoleEmailAdapter()
+    await send_template(
+        port,
+        to="new@example.com",
+        subject="Welcome",
+        template="welcome",
+        context=_CONTEXT,
+    )
+    message = port.sent[0]
+    assert message.recipients() == ["new@example.com"]
+    assert message.subject == "Welcome"
+    # The named template was rendered with the context (not left as a deferred reference).
+    assert message.template is None
+    assert message.html is not None
+    assert "new@example.com" in message.html
+    assert "Acme" in message.html
+
+
+def test_render_message_fills_html_and_text_from_template() -> None:
+    rendered = render_message(
+        EmailMessage(
+            to="x@example.com",
+            subject="Reset",
+            template="password_reset",
+            context=_CONTEXT,
+        )
+    )
+    assert rendered.template is None
+    assert rendered.html is not None and "tok-abc-123" in rendered.html
+    assert rendered.text is not None and "tok-abc-123" in rendered.text
+
+
+def test_render_message_passes_pre_rendered_through() -> None:
+    original = EmailMessage(to="x@example.com", subject="s", html="<p>done</p>")
+    assert render_message(original) is original
+
+
+async def test_send_without_body_raises_email_error() -> None:
+    # A message with neither a body nor a template can't be delivered through a real adapter.
+    adapter = SMTPAdapter(settings=Settings(email_provider="smtp", smtp_host="smtp.test"))
+    with pytest.raises(EmailError):
+        await adapter.send(EmailMessage(to="x@example.com", subject="s"))
+
+
+async def test_smtp_unconfigured_suppresses_instead_of_sending() -> None:
+    sent: list[Any] = []
+
+    async def fake_send(message: Any, **kwargs: Any) -> None:
+        sent.append(message)
+
+    # No SMTP_HOST -> the send is logged and skipped, never handed to the transport.
+    adapter = SMTPAdapter(sender=fake_send, settings=Settings(email_provider="smtp"))
+    await adapter.send(EmailMessage(to="x@example.com", subject="s", text="hi"))
+    assert sent == []
+
+
+async def test_ses_unconfigured_suppresses_instead_of_sending() -> None:
+    class _Unreachable:
+        def client(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("SES client must not be built when unconfigured")
+
+    # No SES credentials -> suppress; the fake session raises if the client is ever built.
+    adapter = SESAdapter(session=_Unreachable(), settings=Settings(email_provider="ses"))
+    await adapter.send(EmailMessage(to="x@example.com", subject="s", text="hi"))
