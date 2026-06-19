@@ -126,6 +126,8 @@
 | Requirements traceability matrix (req→component→test→deploy→SLO) | 📋 | [TRACEABILITY.md](TRACEABILITY.md) |
 | System/component design — C4 + sequence + ER (diagrams-as-code) | 📋 | [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md) |
 | CI/CD + DevSecOps gates (SAST/SCA/secret/SBOM/sign/SLSA) | ✅/📋 | [CICD-PIPELINE.md](CICD-PIPELINE.md) (P2) |
+| **Code quality + coverage gates** (ruff/mypy-strict/import-linter/complexity/dead-code/patch-cov) | ✅/📋 | [CODE-QUALITY.md](CODE-QUALITY.md) (P2) |
+| **Deterministic / high-assurance code** (Hypothesis/Schemathesis/mutmut/pytest-randomly/reproducible builds) | ✅/📋 | [CODE-QUALITY.md](CODE-QUALITY.md) (P2) |
 | Deployment topology + networking + IaC (cloud/hybrid/self-host) | 📋 | [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) |
 | Custom MCP servers (FastMCP, OAuth2.1, per-tenant) | 📋 | [MCP-SERVERS.md](MCP-SERVERS.md) |
 | Threat modeling (STRIDE per component) · ADRs · contract tests · SLOs | 📋 | SDLC.md + per-phase |

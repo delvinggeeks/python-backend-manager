@@ -66,6 +66,10 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
   phase ships its own component/sequence/ER-delta diagrams in the same notation.
 - `docs/CICD-PIPELINE.md` — the CI/CD stages + **DevSecOps gates** (secret-scan/SAST/SCA/SBOM/sign/SLSA)
   wrapping the existing capability gate.
+- `docs/CODE-QUALITY.md` — the **code-quality + coverage + deterministic-code** gates (ruff/mypy-strict +
+  import-linter architecture enforcement + complexity/dead-code/docstring + patch-coverage; Hypothesis/
+  Schemathesis/mutmut; pytest-randomly + freezegun + reproducible builds). Python-native stack > SonarQube
+  for this scope (ADR-36). It's the quality half of P2; every phase inherits it.
 - `docs/INFRA-TOPOLOGY.md` — cloud / hybrid / self-host **deployment routes + networking + IaC**, staged
   by growth; India-residency (DPDP) constraints.
 - `docs/MCP-SERVERS.md` — building **custom MCP servers** (FastMCP, Streamable HTTP, OAuth2.1, per-tenant);

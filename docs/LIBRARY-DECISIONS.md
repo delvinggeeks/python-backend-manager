@@ -385,3 +385,20 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
 - **Why:** lifecycle + compliant offboarding is core multi-tenant plumbing; composes P16 (data-rights)
   rather than reinventing it.
 - **Swap path:** lifecycle service; SCIM adapter when an enterprise needs directory sync.
+
+## ADR-36 — Code-quality, coverage & determinism stack
+- **Default:** the **Python-native quality stack** — `ruff` (+`S` security/`I` import rules, have),
+  `mypy --strict` (have), `vulture` (dead code), `radon`/`xenon` (complexity), **`import-linter`**
+  (architecture-boundary enforcement of ports/adapters), `interrogate` (docstrings), `coverage.py`
+  patch/branch gate; **test-effectiveness**: `Hypothesis` (invariants) + `Schemathesis` (OpenAPI fuzz);
+  **determinism**: `pytest-randomly` + `freezegun`/`time-machine` + reproducible builds
+  (`SOURCE_DATE_EPOCH` + digest-pinned image). Full spec: [CODE-QUALITY.md](CODE-QUALITY.md).
+- **Alternatives:** **SonarQube** (Community = no PR/branch analysis; Developer **$15-25k/yr**),
+  **Codacy/DeepSource/Qlty** (managed aggregators), **CodeQL** (free OSS-only), **Semgrep** ($40/dev/mo
+  beyond OSS), **Codecov/Coveralls** (PR coverage decoration — free tier seam); **mutmut** mutation
+  testing + **atheris** fuzzing (SEAM-NOW, critical modules).
+- **Cost:** native stack ≈ ₹0, self-hosted, DPDP-safe, sub-1% false-positives; SonarQube is ops + $$$.
+- **Why:** the native stack covers all SonarQube-Community features and more (dead-code, architecture
+  boundaries, docstrings) at zero cost; SonarQube only adds PR-decoration/taint at enterprise scale.
+  `import-linter` is the standout — it makes the architecture itself a CI gate.
+- **Swap path:** add SonarQube/Codecov as CI steps at ≥50 devs / regulated audit — the native gates stay.

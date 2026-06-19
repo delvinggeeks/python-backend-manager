@@ -130,6 +130,8 @@
 | Requirements traceability matrix | 📋 [TRACEABILITY.md](TRACEABILITY.md) |
 | System/component design — C4 + sequence + ER | 📋 [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md) |
 | CI/CD + DevSecOps gates | ✅/📋 [CICD-PIPELINE.md](CICD-PIPELINE.md) |
+| **Code quality + coverage + security gates** (ruff/mypy-strict/import-linter/complexity/dead-code/patch-coverage) | ✅/📋 [CODE-QUALITY.md](CODE-QUALITY.md) (P2) |
+| **Deterministic & high-assurance code** (property/fuzz/mutation, pytest-randomly, reproducible builds) | ✅/📋 [CODE-QUALITY.md](CODE-QUALITY.md) (P2) |
 | Deployment topology + networking + IaC | 📋 [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) |
 
 ---

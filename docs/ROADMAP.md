@@ -33,19 +33,25 @@ them automatically — no branch-protection change).
   cover IPv4/IPv6/redirect/rebind cases.
 - **CI:** reuse `webhooks` / `audit_webhooks` rows; add a guard unit test (no network).
 
-### P2 · Supply-chain + ingress hardening  🟠 (CI + a small middleware)
+### P2 · Supply-chain + ingress + **code-quality/determinism** hardening  🟠 (CI + a small middleware)
 - **Scope:** (a) **supply-chain** — SBOM (CycloneDX/Syft), Trivy image scan, Cosign keyless signing
-  (GitHub OIDC), SHA-pinned actions — in **both** the template's own CI and the **generated**
-  service's `.github/workflows`; Renovate auto-merge off for majors. (b) **ingress hardening** — a
-  security-headers middleware (HSTS, `X-Content-Type-Options`, `X-Frame-Options`/frame-ancestors CSP,
-  `Referrer-Policy`) and tightened CORS defaults (the current `allow_origins=["*"]` is a dev default
-  to lock down). *(Skeptic-review addition: the template had egress SSRF on the roadmap but no
-  ingress header posture.)*
-- **Toggle/Port:** none new (CI surface + a core middleware that's safe-by-default).
-- **Implies/Deps:** none. The generated-workflow render-gate already validates the YAML.
-- **DoD:** template CI emits a signed image + SBOM artifact; generated CI renders valid scan/sign
-  jobs; security headers present on responses; CORS default is restrictive with a documented opt-in.
-- **CI:** existing framework rows (render-gate covers the new workflow YAML) + a header-presence test.
+  (GitHub OIDC), SHA-pinned actions, **reproducible builds** (`SOURCE_DATE_EPOCH` + digest-pinned base
+  image), **SLSA-2** provenance — in **both** the template CI and the **generated** service CI. (b)
+  **ingress hardening** — security-headers middleware (HSTS, `X-Content-Type-Options`, `X-Frame-Options`/
+  CSP, `Referrer-Policy`) + tightened CORS. (c) **code-quality + determinism gates** (full spec in
+  [CODE-QUALITY.md](CODE-QUALITY.md)) — add **`vulture`** (dead code), **`radon`/`xenon`** (complexity),
+  **`import-linter`** (enforce the ports/adapters architecture in CI), **`interrogate`** (docstrings),
+  **per-PR patch-coverage** gate; **`Hypothesis`** invariants + **`Schemathesis`** OpenAPI fuzz +
+  **`pytest-randomly`** + **`freezegun`/`time-machine`** (deterministic, flaky-surfacing tests). The
+  Python-native stack is the default (**SonarQube** is a documented ≥50-dev seam — ADR-36).
+- **Toggle/Port:** none new (CI surface + safe-by-default middleware + dev-deps). `mutmut` mutation
+  gate + nightly flaky-sweep are optional informational jobs (SEAM-NOW).
+- **Implies/Deps:** none. The generated-workflow render-gate validates the YAML.
+- **DoD:** template + generated CI emit a signed, reproducible image + SBOM; security headers present;
+  CORS locked; the quality gate (dead-code=0, complexity≤C, import-linter contracts pass, docstring≥80%,
+  patch-coverage met) blocks a failing PR; Hypothesis/Schemathesis run in pytest; pytest-randomly green.
+- **CI:** existing rows + the quality-gate steps in the matrix legs + a header-presence test (no new
+  required check; the aggregated gate covers them).
 
 ---
 
