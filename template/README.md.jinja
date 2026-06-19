@@ -50,7 +50,8 @@ src/app/
   agents/          # framework-agnostic agent runner + model cascade
   db/              # async SQLAlchemy session + models (db extra)
   schemas/         # shared pydantic models
-tests/
+{% if include_email %}  email/           # provider-agnostic EmailPort + SMTP/SES adapters + templates (email extra)
+{% endif %}tests/
 ```
 
 {% if include_tenancy or include_rbac or include_api_keys or include_billing %}
@@ -144,6 +145,38 @@ never hard-coded:
 in `app.billing.provider`, and add its key to the `payments_provider` choices — see AGENTS.md.
 The one provider-specific boundary is the **frontend checkout handoff**: `start_checkout`
 returns each provider's own hosted-checkout redirect URL.
+
+{% endif %}
+{% if include_email %}
+## Email & notifications (provider-agnostic)
+
+Email goes through a **hexagonal port**: `app.email.ports.EmailPort` is the app's-needs contract
+(`send(EmailMessage)` over a normalized, vendor-neutral message); `app.email.adapters` holds the
+**SMTP** (aiosmtplib) and **Amazon SES** (aioboto3) implementations plus a credential-free
+console/suppress backend; the active one is selected by `EMAIL_PROVIDER` (default
+`{{ email_provider }}`). Nothing in the app imports a vendor SDK — it speaks only the port and the
+normalized `EmailMessage`. Bodies are rendered from jinja2 templates in `app.email.templates` by a
+typed helper (`app.email.send.send_template`), so callers pass a template name + context, never raw
+HTML. `get_email_provider()` selects the adapter exactly like `get_payments_provider`.
+
+```text
+EMAIL_PROVIDER=smtp        SMTP (Zoho / Microsoft 365 / any host) — the default
+EMAIL_PROVIDER=ses         Amazon SES over the AWS API (pairs with S3-compatible storage)
+EMAIL_SUPPRESS_SEND=true   dev/test: capture to the console backend, send nothing
+```
+
+Nothing sends until the active provider is configured (no `SMTP_HOST` / no SES keys → the send is
+logged and skipped), so a fresh dev environment never blocks on email. Configure the active
+provider's credentials per environment — never hard-coded:
+- **SMTP** (`EMAIL_PROVIDER=smtp`): `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`,
+  `SMTP_PASSWORD`, `SMTP_START_TLS` / `SMTP_USE_TLS`, plus `EMAIL_FROM_ADDRESS`.
+- **SES** (`EMAIL_PROVIDER=ses`): `SES_REGION`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY`
+  (or leave the keys unset to use an instance IAM role), plus `EMAIL_FROM_ADDRESS`.
+
+**Adding an email provider** = implement `EmailPort` in `app.email.adapters`, register it in
+`app.email.provider`, and add its key to the `email_provider` choices — see AGENTS.md.
+{% if include_users %}The user manager sends a **welcome** email on registration and a
+**password-reset** email on a reset request, rendered from these templates.{% endif %}
 
 {% endif %}
 {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}

@@ -1,0 +1,61 @@
+"""User manager — registration / password-reset / verification hooks.
+
+Requires the `db` + `users` extras.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncIterator
+
+from fastapi import Depends{% if include_email %}, Request{% endif +%}
+from fastapi_users import BaseUserManager, UUIDIDMixin
+from fastapi_users.db import SQLAlchemyUserDatabase
+
+from app.core.config import get_settings
+from app.users.db import get_user_db
+from app.users.models import User
+
+_settings = get_settings()
+
+
+class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
+    reset_password_token_secret = _settings.users_jwt_secret
+    verification_token_secret = _settings.users_jwt_secret
+{% if include_email %}
+
+    async def on_after_register(self, user: User, request: Request | None = None) -> None:
+        """Send a welcome email after a successful registration (suppressed if unconfigured)."""
+        from app.email.provider import get_email_provider
+        from app.email.send import send_template
+
+        await send_template(
+            get_email_provider(),
+            to=user.email,
+            subject="Welcome to {{ project_name }}",
+            template="welcome",
+            context={"email": user.email, "project_name": "{{ project_name }}"},
+        )
+
+    async def on_after_forgot_password(
+        self, user: User, token: str, request: Request | None = None
+    ) -> None:
+        """Email a password-reset token after a reset request (suppressed if unconfigured)."""
+        from app.email.provider import get_email_provider
+        from app.email.send import send_template
+
+        await send_template(
+            get_email_provider(),
+            to=user.email,
+            subject="Reset your {{ project_name }} password",
+            template="password_reset",
+            context={"email": user.email, "token": token, "project_name": "{{ project_name }}"},
+        )
+{% endif %}
+
+
+async def get_user_manager(
+    user_db: SQLAlchemyUserDatabase[User, uuid.UUID] = Depends(get_user_db),
+) -> AsyncIterator[UserManager]:
+    """FastAPI dependency yielding the user manager for the request."""
+    yield UserManager(user_db)
