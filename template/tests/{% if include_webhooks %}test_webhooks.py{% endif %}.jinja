@@ -10,6 +10,7 @@ from `conftest.pytest_configure`.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -31,6 +32,7 @@ from app.jobs.tasks import deliver_webhook
 from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
 from app.users.models import User  # noqa: F401  (registers the user table)
 from app.webhooks import dispatch
+from app.webhooks.egress import WebhookEgressError, assert_public_url, resolve_pinned_target
 from app.webhooks.models import WebhookEndpoint
 from app.webhooks.security import SIGNATURE_HEADER, sign_payload
 
@@ -82,10 +84,18 @@ async def _make_org(client: AsyncClient, auth: dict[str, str]) -> str:
 
 
 async def _seed_org_with_endpoint(
-    *, event_types: str = "member.added", active: bool = True, secret: str = "topsecret"
+    *,
+    event_types: str = "member.added",
+    active: bool = True,
+    secret: str = "topsecret",
+    url: str = "https://1.1.1.1/receive",
 ) -> tuple[uuid.UUID, str, str]:
-    """Insert an org + one webhook endpoint directly; return (org_id, endpoint_id, url)."""
-    url = "https://hooks.example.com/receive"
+    """Insert an org + one webhook endpoint directly; return (org_id, endpoint_id, url).
+
+    The default ``url`` is a literal public IP so the SSRF egress guard resolves it to itself
+    without DNS — delivery tests stay deterministic and need no network. Pass a private/metadata
+    URL to exercise the guard's block path.
+    """
     async with SessionFactory() as session:
         org = Organization(name="Acme", slug="acme")
         session.add(org)
@@ -272,3 +282,115 @@ async def test_deliver_webhook_retries_on_failure() -> None:
                 event_type="member.added",
                 payload=payload,
             )
+
+
+# --- SSRF egress guard -------------------------------------------------------------------------
+# A webhook URL is tenant-controlled, so the worker must refuse to POST to a non-public target.
+# Literal IPs resolve to themselves (no DNS), so every case below is deterministic and offline.
+
+_SSRF_BLOCKED_URLS = [
+    "http://169.254.169.254/latest/meta-data/",  # cloud-metadata (link-local)
+    "http://127.0.0.1/hook",  # IPv4 loopback
+    "http://10.0.0.1/hook",  # RFC1918 private
+    "http://192.168.1.10/hook",  # RFC1918 private
+    "http://172.16.5.4/hook",  # RFC1918 private
+    "http://100.64.0.1/hook",  # CGNAT (RFC 6598)
+    "http://0.0.0.0/hook",  # unspecified
+    "http://[::1]/hook",  # IPv6 loopback
+    "http://[fd00::1]/hook",  # IPv6 unique-local
+    "http://[::ffff:10.0.0.1]/hook",  # IPv4-mapped private (bypass attempt)
+    "ftp://1.1.1.1/hook",  # unsupported scheme
+    "https:///hook",  # missing host
+    "http://example.com:notaport/hook",  # malformed port — must fail closed, not crash
+]
+
+
+@pytest.mark.parametrize("url", _SSRF_BLOCKED_URLS)
+async def test_egress_guard_blocks_unsafe_targets(url: str) -> None:
+    with pytest.raises(WebhookEgressError):
+        await assert_public_url(url)
+
+
+@pytest.mark.parametrize("url", ["http://1.1.1.1/wh", "https://8.8.8.8/wh"])
+async def test_egress_guard_allows_public_targets(url: str) -> None:
+    # A globally-routable literal IP passes the guard with no DNS lookup and no network.
+    await assert_public_url(url)
+
+
+async def test_deliver_webhook_blocks_ssrf_target() -> None:
+    # An endpoint pointed at the cloud-metadata address must never be POSTed to: the guard blocks
+    # delivery before any HTTP call and returns cleanly (no Retry — a private/metadata target is a
+    # permanent risk, not a transient failure). respx is armed so a regression that *did* POST is
+    # caught hermetically (intercepted, never a real connection) rather than hanging on the network.
+    _org_id, endpoint_id, url = await _seed_org_with_endpoint(url="http://169.254.169.254/")
+    with respx.mock(assert_all_called=False) as respx_mock:
+        route = respx_mock.post(url).mock(return_value=httpx.Response(200))
+        await deliver_webhook(
+            {"job_try": 1},
+            endpoint_id=endpoint_id,
+            event_type="member.added",
+            payload={"data": {"x": 1}},
+        )
+
+    assert not route.called  # blocked before any POST
+{% if include_audit %}
+
+    async with SessionFactory() as session:
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.action == "webhook.delivery_blocked")
+        )
+        assert result.scalar_one().target == endpoint_id
+{% endif %}
+
+
+async def test_resolve_pinned_target_pins_to_validated_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # DNS-rebinding defense: a hostname is resolved + validated ONCE, then the connection is pinned
+    # to that validated IP literal — the host is never re-resolved, so a nameserver can't swap in a
+    # private address afterwards. TLS/cert verification stays bound to the original hostname.
+    async def _fake_getaddrinfo(host: str, port: int, **_kw: Any) -> list[Any]:
+        assert host == "hooks.tenant.example"
+        return [(0, 0, 0, "", ("8.8.8.8", port))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", _fake_getaddrinfo)
+
+    target = await resolve_pinned_target("https://hooks.tenant.example/wh")
+    assert target.url == "https://8.8.8.8/wh"  # dials the validated IP literal (no re-resolution)
+    assert target.sni_hostname == "hooks.tenant.example"  # TLS still verifies the real name
+    assert target.host_header == "hooks.tenant.example"
+
+
+async def test_resolve_pinned_target_blocks_rebind_to_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A public-looking hostname that resolves inward (a rebind to a private IP) is still refused.
+    async def _fake_getaddrinfo(_host: str, port: int, **_kw: Any) -> list[Any]:
+        return [(0, 0, 0, "", ("10.0.0.5", port))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", _fake_getaddrinfo)
+
+    with pytest.raises(WebhookEgressError):
+        await resolve_pinned_target("https://hooks.tenant.example/wh")
+
+
+async def test_deliver_webhook_does_not_follow_redirects() -> None:
+    # A 3xx to an internal host must NOT be followed (follow_redirects=False), so a redirect can't
+    # reach a private address. Only a 2xx is success: the unfollowed 3xx retries, but the internal
+    # location is never requested — the security property under test.
+    _org_id, endpoint_id, url = await _seed_org_with_endpoint()  # public literal-IP seed
+    with respx.mock(assert_all_called=False) as respx_mock:
+        outbound = respx_mock.post(url).mock(
+            return_value=httpx.Response(302, headers={"Location": "http://169.254.169.254/"})
+        )
+        internal = respx_mock.get("http://169.254.169.254/").mock(return_value=httpx.Response(200))
+        with pytest.raises(Retry):
+            await deliver_webhook(
+                {"job_try": 1},
+                endpoint_id=endpoint_id,
+                event_type="member.added",
+                payload={"data": {}},
+            )
+
+    assert outbound.called  # POSTed once to the public endpoint
+    assert not internal.called  # never chased the redirect to the internal host

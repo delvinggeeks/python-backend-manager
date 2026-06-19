@@ -69,6 +69,7 @@ async def deliver_webhook(
     from app.audit import record
 {% endif %}
     from app.db.session import SessionFactory
+    from app.webhooks.egress import WebhookEgressError, resolve_pinned_target
     from app.webhooks.models import WebhookEndpoint
     from app.webhooks.security import SIGNATURE_HEADER, sign_payload
 
@@ -83,17 +84,46 @@ async def deliver_webhook(
         organization_id = endpoint.organization_id
 {% endif %}
 
+    # SSRF egress guard: resolve + pin the tenant URL to a validated public IP before we POST.
+    try:
+        target = await resolve_pinned_target(url)
+    except WebhookEgressError as exc:
+        # Private/metadata target = permanent SSRF risk, not transient — block, don't retry.
+        log.warning("webhooks.delivery_blocked_ssrf", endpoint_id=endpoint_id, error=str(exc))
+{% if include_audit %}
+        async with SessionFactory() as session:
+            await record(
+                session,
+                "webhook.delivery_blocked",
+                actor="system",
+                target=endpoint_id,
+                organization_id=organization_id,
+                event_type=event_type,
+                reason=str(exc),
+            )
+            await session.commit()
+{% endif %}
+        return
+
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
+        "Host": target.host_header,  # vhost routing: we dial the pinned IP, not the hostname
         SIGNATURE_HEADER: f"sha256={sign_payload(secret, body)}",
         "X-Webhook-Event": event_type,
     }
     attempt = ctx.get("job_try", 1)
     log.info("webhooks.delivering", endpoint_id=endpoint_id, event_type=event_type)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, content=body, headers=headers)
+        # follow_redirects=False so a 3xx to an internal host is never chased; sni_hostname keeps
+        # TLS verification bound to the real hostname even though we connect to the pinned IP.
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            response = await client.post(
+                target.url,
+                content=body,
+                headers=headers,
+                extensions={"sni_hostname": target.sni_hostname},
+            )
         response.raise_for_status()
     except httpx.HTTPError as exc:
         log.warning(
