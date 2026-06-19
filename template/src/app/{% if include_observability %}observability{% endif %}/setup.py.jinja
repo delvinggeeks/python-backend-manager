@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from fastapi import Request, Response
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
@@ -27,8 +28,13 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from prometheus_client import CollectorRegistry, PlatformCollector, ProcessCollector
-from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    PlatformCollector,
+    ProcessCollector,
+    generate_latest,
+)
 
 from app import __version__
 from app.core.config import get_settings
@@ -71,17 +77,23 @@ def setup_observability(app: FastAPI) -> bool:
 
 
 def _setup_metrics_endpoint(app: FastAPI) -> None:
-    """Expose Prometheus ``/metrics`` with default HTTP + process/runtime metrics.
+    """Expose a Prometheus ``/metrics`` endpoint with process / Python runtime metrics.
 
-    Uses a per-app CollectorRegistry so building several apps in one process (the test suite)
-    never double-registers a metric. Independent of OTLP — local scraping works with no collector.
+    A per-app CollectorRegistry keeps building several apps in one process (the test suite) from
+    double-registering a collector. This scrape endpoint is independent of OTLP — it works with no
+    collector. Per-request HTTP metrics are emitted by the OTel FastAPI instrumentation over OTLP
+    (see ``_setup_otlp``); we serve the registry directly rather than through
+    prometheus-fastapi-instrumentator, whose per-request middleware can't introspect FastAPI's
+    routing internals (it raises on FastAPI's _IncludedRouter routes).
     """
     registry = CollectorRegistry()
     ProcessCollector(registry=registry)
     PlatformCollector(registry=registry)
-    Instrumentator(registry=registry).instrument(app).expose(
-        app, endpoint="/metrics", include_in_schema=False
-    )
+
+    async def metrics_endpoint(_request: Request) -> Response:
+        return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+
+    app.add_route("/metrics", metrics_endpoint, include_in_schema=False)
 
 
 def _setup_otlp(endpoint: str) -> None:

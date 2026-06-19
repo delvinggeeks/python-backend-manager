@@ -160,7 +160,7 @@ jobs:
           # install and import, /healthz + /readyz + /metrics serve, setup no-ops with no OTLP
           # endpoint). The _full row adds db + users + jobs so the SQLAlchemy + Redis
           # auto-instrumentation and the db/redis readiness probes are compiled and exercised.
-          - { capability: observability,      data: "--data include_observability=true", extras: "--extra observability" }
+          - { capability: observability,      data: "--data include_observability=true --data include_db=false --data include_cache=false", extras: "--extra observability" }
           - { capability: observability_full, data: "--data include_observability=true --data include_db=true --data include_users=true --data include_jobs=true", extras: "--extra db --extra users --extra worker --extra observability" }
     steps:
       - uses: actions/checkout@v6
