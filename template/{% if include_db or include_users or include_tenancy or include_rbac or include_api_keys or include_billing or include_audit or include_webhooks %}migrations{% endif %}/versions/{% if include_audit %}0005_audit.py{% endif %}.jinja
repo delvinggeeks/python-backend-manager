@@ -1,0 +1,63 @@
+"""audit log (append-only event table)
+
+Revision ID: 0005_audit
+Revises: {% if include_billing %}0004_billing{% elif include_api_keys %}0003_api_keys{% elif include_tenancy or include_rbac or include_webhooks %}0002_tenancy{% elif include_users %}0001_initial_schema{% else %}(root){% endif %}
+
+Create Date: ships with the template (include_audit)
+
+The ``audit_logs`` table is append-only — the application writes rows via
+``app.audit.record`` and never updates or deletes them. ``organization_id`` is present only
+when the tenancy module ships (so the log can be org-scoped); otherwise the table is flat.
+"""
+
+from collections.abc import Sequence
+
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+import fastapi_users_db_sqlalchemy.generics
+{% endif %}
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0005_audit"
+down_revision: str | Sequence[str] | None = {% if include_billing %}"0004_billing"{% elif include_api_keys %}"0003_api_keys"{% elif include_tenancy or include_rbac or include_webhooks %}"0002_tenancy"{% elif include_users %}"0001_initial_schema"{% else %}None{% endif %}
+
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "audit_logs",
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("organization_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+{% else %}
+        sa.Column("id", sa.Uuid(), nullable=False),
+{% endif %}
+        sa.Column("actor", sa.String(length=255), nullable=True),
+        sa.Column("action", sa.String(length=255), nullable=False),
+        sa.Column("target", sa.String(length=255), nullable=True),
+        sa.Column("metadata", sa.JSON(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+{% endif %}
+        sa.PrimaryKeyConstraint("id"),
+    )
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    op.create_index(
+        op.f("ix_audit_logs_organization_id"), "audit_logs", ["organization_id"], unique=False
+    )
+{% endif %}
+    op.create_index(op.f("ix_audit_logs_action"), "audit_logs", ["action"], unique=False)
+    op.create_index(op.f("ix_audit_logs_created_at"), "audit_logs", ["created_at"], unique=False)
+
+
+def downgrade() -> None:
+    op.drop_index(op.f("ix_audit_logs_created_at"), table_name="audit_logs")
+    op.drop_index(op.f("ix_audit_logs_action"), table_name="audit_logs")
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    op.drop_index(op.f("ix_audit_logs_organization_id"), table_name="audit_logs")
+{% endif %}
+    op.drop_table("audit_logs")

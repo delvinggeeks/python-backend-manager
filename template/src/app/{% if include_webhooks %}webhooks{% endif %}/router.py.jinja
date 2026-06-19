@@ -1,0 +1,162 @@
+"""The ``/orgs/{org_id}/webhooks`` router — manage a tenant's outbound webhook endpoints.
+
+Org-scoped: every route is authorised by the caller's membership in ``{org_id}``. The mutating
+routes (create/update/delete) {% if include_rbac %}require the ``admin`` role or higher{% else %}require membership{% endif %}.
+
+    POST   /orgs/{org_id}/webhooks        register an endpoint (secret generated if omitted)
+    GET    /orgs/{org_id}/webhooks        list this org's endpoints
+    GET    /orgs/{org_id}/webhooks/{id}   fetch one endpoint
+    PATCH  /orgs/{org_id}/webhooks/{id}   update url / events / active
+    DELETE /orgs/{org_id}/webhooks/{id}   remove an endpoint
+"""
+
+from __future__ import annotations
+
+import secrets
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session
+{% if include_rbac %}from app.rbac import require_role
+{% endif %}from app.tenancy.dependencies import get_current_membership
+{% if include_rbac %}from app.tenancy.models import ADMIN, Membership
+{% else %}from app.tenancy.models import Membership
+{% endif %}from app.webhooks.models import WebhookEndpoint
+from app.webhooks.schemas import (
+    WebhookEndpointCreate,
+    WebhookEndpointRead,
+    WebhookEndpointUpdate,
+)
+
+router = APIRouter()
+
+
+def _to_read(endpoint: WebhookEndpoint) -> WebhookEndpointRead:
+    """Project an ORM row to ``WebhookEndpointRead``, splitting stored event types into a list."""
+    return WebhookEndpointRead(
+        id=endpoint.id,
+        organization_id=endpoint.organization_id,
+        url=endpoint.url,
+        secret=endpoint.secret,
+        event_types=endpoint.event_types.split(),
+        active=endpoint.active,
+        created_at=endpoint.created_at,
+    )
+
+
+async def _get_endpoint(
+    session: AsyncSession, org_id: uuid.UUID, endpoint_id: uuid.UUID
+) -> WebhookEndpoint:
+    """Fetch an endpoint scoped to ``org_id`` or raise 404."""
+    result = await session.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.organization_id == org_id,
+        )
+    )
+    endpoint = result.scalar_one_or_none()
+    if endpoint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found"
+        )
+    return endpoint
+
+
+@router.post(
+    "/orgs/{org_id}/webhooks",
+    response_model=WebhookEndpointRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_webhook_endpoint(
+    org_id: uuid.UUID,
+    payload: WebhookEndpointCreate,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
+    membership: Membership = Depends(get_current_membership),
+{% endif %}
+    session: AsyncSession = Depends(get_session),
+) -> WebhookEndpointRead:
+    """Register an outbound webhook endpoint. A signing secret is generated if not supplied."""
+    endpoint = WebhookEndpoint(
+        organization_id=org_id,
+        url=payload.url,
+        secret=payload.secret or secrets.token_urlsafe(32),
+        event_types=" ".join(payload.event_types),
+        active=payload.active,
+    )
+    session.add(endpoint)
+    await session.commit()
+    await session.refresh(endpoint)
+    return _to_read(endpoint)
+
+
+@router.get("/orgs/{org_id}/webhooks", response_model=list[WebhookEndpointRead])
+async def list_webhook_endpoints(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> list[WebhookEndpointRead]:
+    """List this org's webhook endpoints."""
+    result = await session.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.organization_id == org_id)
+        .order_by(WebhookEndpoint.created_at)
+    )
+    return [_to_read(endpoint) for endpoint in result.scalars().all()]
+
+
+@router.get("/orgs/{org_id}/webhooks/{endpoint_id}", response_model=WebhookEndpointRead)
+async def get_webhook_endpoint(
+    org_id: uuid.UUID,
+    endpoint_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> WebhookEndpointRead:
+    """Fetch a single webhook endpoint."""
+    return _to_read(await _get_endpoint(session, org_id, endpoint_id))
+
+
+@router.patch("/orgs/{org_id}/webhooks/{endpoint_id}", response_model=WebhookEndpointRead)
+async def update_webhook_endpoint(
+    org_id: uuid.UUID,
+    endpoint_id: uuid.UUID,
+    payload: WebhookEndpointUpdate,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
+    membership: Membership = Depends(get_current_membership),
+{% endif %}
+    session: AsyncSession = Depends(get_session),
+) -> WebhookEndpointRead:
+    """Update an endpoint's url, subscribed events, or active flag."""
+    endpoint = await _get_endpoint(session, org_id, endpoint_id)
+    if payload.url is not None:
+        endpoint.url = payload.url
+    if payload.event_types is not None:
+        endpoint.event_types = " ".join(payload.event_types)
+    if payload.active is not None:
+        endpoint.active = payload.active
+    await session.commit()
+    await session.refresh(endpoint)
+    return _to_read(endpoint)
+
+
+@router.delete("/orgs/{org_id}/webhooks/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_webhook_endpoint(
+    org_id: uuid.UUID,
+    endpoint_id: uuid.UUID,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
+    membership: Membership = Depends(get_current_membership),
+{% endif %}
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Remove a webhook endpoint."""
+    endpoint = await _get_endpoint(session, org_id, endpoint_id)
+    await session.delete(endpoint)
+    await session.commit()

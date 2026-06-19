@@ -1,0 +1,107 @@
+"""The read-only audit-log API. Append-only: only GET routes exist — no create/update/delete.
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+Org-scoped (``GET /orgs/{org_id}/audit``), authorised by the caller's membership in
+``{org_id}``{% if include_rbac %} and gated to the ``admin`` role or higher{% endif %}. Results are paginated, newest first.
+{% else %}
+Flat (``GET /audit``){% if include_users %}, requiring an authenticated user{% endif %}. Results are paginated, newest first.
+{% endif %}"""
+
+from __future__ import annotations
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+
+import uuid
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit.models import AuditLog
+from app.audit.schemas import AuditLogPage, AuditLogRead
+from app.db.session import get_session
+{% if include_rbac %}from app.rbac import require_role
+from app.tenancy.models import ADMIN, Membership
+{% else %}from app.tenancy.dependencies import get_current_membership
+from app.tenancy.models import Membership
+{% endif %}
+
+router = APIRouter()
+
+
+def _to_read(entry: AuditLog) -> AuditLogRead:
+    """Project an ORM row to ``AuditLogRead`` (the ``meta`` column is exposed as ``metadata``)."""
+    return AuditLogRead(
+        id=entry.id,
+        organization_id=entry.organization_id,
+        actor=entry.actor,
+        action=entry.action,
+        target=entry.target,
+        metadata=entry.meta,
+        created_at=entry.created_at,
+    )
+
+
+@router.get("/orgs/{org_id}/audit", response_model=AuditLogPage)
+async def list_audit_logs(
+    org_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
+    membership: Membership = Depends(get_current_membership),
+{% endif %}
+    session: AsyncSession = Depends(get_session),
+) -> AuditLogPage:
+    """List this org's audit events, newest first. Read-only — the log is append-only."""
+    scoped = select(AuditLog).where(AuditLog.organization_id == org_id)
+    total = await session.scalar(select(func.count()).select_from(scoped.subquery()))
+    result = await session.execute(
+        scoped.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+    )
+    items = [_to_read(entry) for entry in result.scalars().all()]
+    return AuditLogPage(items=items, total=int(total or 0), limit=limit, offset=offset)
+{% else %}
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit.models import AuditLog
+from app.audit.schemas import AuditLogPage, AuditLogRead
+from app.db.session import get_session
+{% if include_users %}from app.users import current_active_user
+from app.users.models import User
+{% endif %}
+
+router = APIRouter()
+
+
+def _to_read(entry: AuditLog) -> AuditLogRead:
+    """Project an ORM row to ``AuditLogRead`` (the ``meta`` column is exposed as ``metadata``)."""
+    return AuditLogRead(
+        id=entry.id,
+        actor=entry.actor,
+        action=entry.action,
+        target=entry.target,
+        metadata=entry.meta,
+        created_at=entry.created_at,
+    )
+
+
+@router.get("/audit", response_model=AuditLogPage)
+async def list_audit_logs(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+{% if include_users %}
+    user: User = Depends(current_active_user),
+{% endif %}
+    session: AsyncSession = Depends(get_session),
+) -> AuditLogPage:
+    """List audit events, newest first. Read-only — the log is append-only."""
+    total = await session.scalar(select(func.count()).select_from(AuditLog))
+    result = await session.execute(
+        select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+    )
+    items = [_to_read(entry) for entry in result.scalars().all()]
+    return AuditLogPage(items=items, total=int(total or 0), limit=limit, offset=offset)
+{% endif %}

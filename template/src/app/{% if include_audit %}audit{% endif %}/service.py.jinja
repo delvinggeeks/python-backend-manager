@@ -1,0 +1,44 @@
+"""The one way to write an audit event — :func:`record`, callable from any service.
+
+It only ``add``s + ``flush``es the row; the caller owns the transaction, so an event recorded
+inside a request handler commits atomically with the change it describes. Append-only: there is
+no corresponding update or delete helper.
+"""
+
+from __future__ import annotations
+
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}import uuid
+{% endif %}from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit.models import AuditLog
+
+
+async def record(
+    session: AsyncSession,
+    action: str,
+    *,
+    actor: str | None = None,
+    target: str | None = None,
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    organization_id: uuid.UUID | None = None,
+{% endif %}
+    **meta: Any,
+) -> AuditLog:
+    """Append one audit event. ``action`` is required; ``**meta`` is stored as JSON.
+
+    Flushes (assigning the id) without committing, so it joins the caller's transaction.
+    """
+    entry = AuditLog(
+        action=action,
+        actor=actor,
+        target=target,
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+        organization_id=organization_id,
+{% endif %}
+        meta=meta or None,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry

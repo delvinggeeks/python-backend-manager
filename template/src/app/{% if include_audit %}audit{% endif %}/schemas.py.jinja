@@ -1,0 +1,33 @@
+"""Read schemas for the audit log. There are no create/update schemas — events are written
+through :func:`app.audit.record`, never over HTTP, and the API exposes them read-only."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+
+
+class AuditLogRead(BaseModel):
+    """One audit event as returned by the list endpoint."""
+
+    id: uuid.UUID
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
+    organization_id: uuid.UUID | None
+{% endif %}
+    actor: str | None
+    action: str
+    target: str | None
+    metadata: dict[str, Any] | None
+    created_at: datetime
+
+
+class AuditLogPage(BaseModel):
+    """A page of audit events: the newest-first slice plus the total count."""
+
+    items: list[AuditLogRead]
+    total: int
+    limit: int
+    offset: int

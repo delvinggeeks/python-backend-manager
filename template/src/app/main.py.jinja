@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
 {% if include_mcp %}
     app.mount("/mcp", mcp_app)
 {% endif %}
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
     # Imported here, not at module top, so `app.main` can be imported without a
     # configured DATABASE_URL — the user-DB engine is built when the app is created.
     from app.users import auth_backend, fastapi_users
@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
         tags=["users"],
     )
 {% endif %}
-{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
     from app.tenancy.router import router as tenancy_router
 
     app.include_router(tenancy_router, prefix="/orgs", tags=["organizations"])
@@ -88,10 +88,21 @@ def create_app() -> FastAPI:
     app.include_router(billing_router, prefix="/orgs", tags=["billing"])
     app.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])
 {% endif %}
+{% if include_audit %}
+    from app.audit.router import router as audit_router
+
+    # Mounted at its full path (org-scoped when tenancy is on, flat otherwise), so no prefix.
+    app.include_router(audit_router, tags=["audit"])
+{% endif %}
+{% if include_webhooks %}
+    from app.webhooks.router import router as webhooks_router
+
+    app.include_router(webhooks_router, tags=["webhooks"])
+{% endif %}
 {% if include_storage %}
     from app.storage.router import router as storage_router
 
-{% if include_tenancy or include_rbac or include_api_keys or include_billing %}
+{% if include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks %}
     # Org-scoped: keys are tenant-prefixed and routes reuse the membership dependency.
     app.include_router(storage_router, prefix="/orgs", tags=["storage"])
 {% else %}

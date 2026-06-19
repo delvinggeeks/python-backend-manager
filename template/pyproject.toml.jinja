@@ -84,7 +84,7 @@ dev = [
     "polyfactory>=2.18",
     "respx>=0.21",
     "testcontainers>=4.8",
-{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing %}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
     "aiosqlite>=0.20",
 {% endif %}
 ]

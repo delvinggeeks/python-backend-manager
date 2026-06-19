@@ -1,0 +1,50 @@
+"""outbound webhook endpoints
+
+Revision ID: 0006_webhooks
+Revises: {% if include_audit %}0005_audit{% elif include_billing %}0004_billing{% elif include_api_keys %}0003_api_keys{% else %}0002_tenancy{% endif %}
+
+Create Date: ships with the template (include_webhooks)
+
+``webhook_endpoints`` holds each tenant's registered outbound delivery targets. ``secret`` is
+the per-endpoint HMAC-SHA256 signing key; ``event_types`` is a space-separated subscription
+list. Webhooks imply tenancy, so this always chains onto the organizations table (0002+).
+"""
+
+from collections.abc import Sequence
+
+import fastapi_users_db_sqlalchemy.generics
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0006_webhooks"
+down_revision: str | Sequence[str] | None = {% if include_audit %}"0005_audit"{% elif include_billing %}"0004_billing"{% elif include_api_keys %}"0003_api_keys"{% else %}"0002_tenancy"{% endif %}
+
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "webhook_endpoints",
+        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("organization_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("url", sa.String(length=2048), nullable=False),
+        sa.Column("secret", sa.String(length=255), nullable=False),
+        sa.Column("event_types", sa.String(length=1024), nullable=False),
+        sa.Column("active", sa.Boolean(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_webhook_endpoints_organization_id"),
+        "webhook_endpoints",
+        ["organization_id"],
+        unique=False,
+    )
+
+
+def downgrade() -> None:
+    op.drop_index(op.f("ix_webhook_endpoints_organization_id"), table_name="webhook_endpoints")
+    op.drop_table("webhook_endpoints")
