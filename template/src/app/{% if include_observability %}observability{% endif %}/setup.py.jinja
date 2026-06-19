@@ -1,0 +1,150 @@
+"""OpenTelemetry + Prometheus + Sentry wiring. Requires the `observability` extra.
+
+The three pillars (traces, metrics, logs) export over OTLP, but only once
+OTEL_EXPORTER_OTLP_ENDPOINT is configured — a freshly generated service runs clean with no
+collector. ``/metrics`` (Prometheus), ``/healthz`` and ``/readyz`` are always mounted, and
+Sentry initialises only when SENTRY_DSN is set (the same suppress-when-unconfigured contract as
+the email and jobs capabilities). FastAPI's instrumentation records unhandled exceptions on the
+active span, so errors surface in traces as well as in Sentry.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from prometheus_client import CollectorRegistry, PlatformCollector, ProcessCollector
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from app import __version__
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.observability.health import router as health_router
+from app.observability.sentry import init_sentry
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+log = get_logger(__name__)
+
+# Global OTel providers are process-wide; build the exporting stack at most once even though the
+# app factory may run several times (e.g. across tests).
+_tracer_provider: TracerProvider | None = None
+_meter_provider: MeterProvider | None = None
+_logger_provider: LoggerProvider | None = None
+
+
+def setup_observability(app: FastAPI) -> bool:
+    """Instrument ``app`` and, when configured, start exporting the three pillars over OTLP.
+
+    Always mounts /healthz, /readyz and a Prometheus /metrics endpoint and initialises Sentry
+    (a no-op without a DSN). Returns True when OTLP export is enabled, False otherwise.
+    """
+    settings = get_settings()
+    app.include_router(health_router, tags=["observability"])
+    _setup_metrics_endpoint(app)
+    init_sentry(settings)
+
+    endpoint = settings.otel_exporter_otlp_endpoint
+    if not endpoint:
+        log.info("observability.export_disabled", reason="OTEL_EXPORTER_OTLP_ENDPOINT unset")
+        return False
+
+    _setup_otlp(endpoint.rstrip("/"))
+    FastAPIInstrumentor.instrument_app(app)
+    log.info("observability.export_enabled", endpoint=endpoint)
+    return True
+
+
+def _setup_metrics_endpoint(app: FastAPI) -> None:
+    """Expose Prometheus ``/metrics`` with default HTTP + process/runtime metrics.
+
+    Uses a per-app CollectorRegistry so building several apps in one process (the test suite)
+    never double-registers a metric. Independent of OTLP — local scraping works with no collector.
+    """
+    registry = CollectorRegistry()
+    ProcessCollector(registry=registry)
+    PlatformCollector(registry=registry)
+    Instrumentator(registry=registry).instrument(app).expose(
+        app, endpoint="/metrics", include_in_schema=False
+    )
+
+
+def _setup_otlp(endpoint: str) -> None:
+    """Build the trace/metric/log providers and auto-instrument the in-process clients."""
+    global _tracer_provider, _meter_provider, _logger_provider
+    if _tracer_provider is not None:
+        return  # already configured this process
+
+    settings = get_settings()
+    resource = Resource.create(
+        {
+            "service.name": settings.otel_service_name or settings.app_name,
+            "service.version": __version__,
+            "deployment.environment": settings.environment,
+        }
+    )
+
+    span_exporter = OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+    trace.set_tracer_provider(tracer_provider)
+
+    metric_exporter = OTLPMetricExporter(endpoint=f"{endpoint}/v1/metrics")
+    metric_reader = PeriodicExportingMetricReader(metric_exporter)
+    meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    metrics.set_meter_provider(meter_provider)
+
+    log_exporter = OTLPLogExporter(endpoint=f"{endpoint}/v1/logs")
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    set_logger_provider(logger_provider)
+    # Bridge stdlib logging (uvicorn, libraries) into the OTLP logs pillar. App logs go through
+    # structlog to stdout and are trace-correlated separately by app.core.logging.add_trace_context.
+    logging.getLogger().addHandler(LoggingHandler(logger_provider=logger_provider))
+
+    HTTPXClientInstrumentor().instrument()
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    from app.db.session import engine
+
+    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
+{% endif %}
+{% if include_cache or include_jobs or include_webhooks %}
+    from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+    RedisInstrumentor().instrument()
+{% endif %}
+
+    _tracer_provider = tracer_provider
+    _meter_provider = meter_provider
+    _logger_provider = logger_provider
+
+
+def shutdown_observability() -> None:
+    """Flush and shut down the OTLP providers so buffered telemetry is exported on exit."""
+    global _tracer_provider, _meter_provider, _logger_provider
+    if _tracer_provider is not None:
+        _tracer_provider.shutdown()
+        _tracer_provider = None
+    if _meter_provider is not None:
+        _meter_provider.shutdown()
+        _meter_provider = None
+    if _logger_provider is not None:
+        _logger_provider.shutdown()
+        _logger_provider = None

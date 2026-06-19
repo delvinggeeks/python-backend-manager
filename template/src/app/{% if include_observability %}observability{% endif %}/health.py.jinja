@@ -1,0 +1,79 @@
+"""Liveness + readiness probes.
+
+``/healthz`` is liveness — it returns 200 while the process is up, with no dependency checks.
+``/readyz`` is readiness — it probes the backing services this build actually has (database,
+Redis) and returns 503 if any is unreachable, so an orchestrator keeps traffic away until they
+recover. The probes are gated to what shipped: a service generated without a database has no
+database probe, so readiness stays meaningful (an empty check set is "ready").
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
+
+router = APIRouter()
+
+
+@router.get("/healthz", include_in_schema=False)
+async def healthz() -> dict[str, str]:
+    """Liveness: the process is running. No dependency checks."""
+    return {"status": "ok"}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+
+
+async def _check_database() -> bool:
+    """True when a trivial query succeeds against the configured database."""
+    try:
+        from sqlalchemy import text
+
+        from app.db.session import engine
+
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as exc:  # a readiness probe must never raise
+        log.warning("observability.readiness_db_down", error=str(exc))
+        return False
+    return True
+{% endif %}
+{% if include_cache or include_jobs or include_webhooks %}
+
+
+async def _check_redis() -> bool:
+    """True when Redis answers a PING."""
+    try:
+        from redis.asyncio import from_url
+
+        from app.core.config import get_settings
+
+        redis = from_url(get_settings().redis_url or "redis://localhost:6379")
+        try:
+            await redis.ping()
+        finally:
+            await redis.aclose()
+    except Exception as exc:  # a readiness probe must never raise
+        log.warning("observability.readiness_redis_down", error=str(exc))
+        return False
+    return True
+{% endif %}
+
+
+@router.get("/readyz", include_in_schema=False)
+async def readyz() -> JSONResponse:
+    """Readiness: every backing service this build has is reachable."""
+    checks: dict[str, bool] = {}
+{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}
+    checks["database"] = await _check_database()
+{% endif %}
+{% if include_cache or include_jobs or include_webhooks %}
+    checks["redis"] = await _check_redis()
+{% endif %}
+    ready = all(checks.values())
+    return JSONResponse(
+        {"status": "ready" if ready else "degraded", "checks": checks},
+        status_code=200 if ready else 503,
+    )

@@ -97,7 +97,16 @@ include_auth:
 
 include_observability:
   type: bool
-  help: Include Sentry + Logfire + OpenTelemetry?
+  help: >-
+    Scaffold full OpenTelemetry observability (the three pillars, correlated): an
+    `app/observability` package that auto-instruments FastAPI + httpx (+ SQLAlchemy when db,
+    + redis/arq when jobs) and exports traces, metrics and logs over OTLP; trace_id/span_id
+    injected into the existing structlog output; a Prometheus `/metrics` endpoint plus
+    `/healthz` (liveness) and `/readyz` (readiness — probes db/redis when present); unhandled
+    errors recorded on spans with an OPTIONAL Sentry integration. Nothing exports until
+    OTEL_EXPORTER_OTLP_ENDPOINT is set and Sentry no-ops without SENTRY_DSN, so a fresh service
+    runs clean with no collector. Ships a `--profile observability` local stack (OTel Collector
+    + Prometheus + Tempo + Loki + Grafana) via `just observe`. Implies the `observability` extra.
   default: false
 
 include_mcp:

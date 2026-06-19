@@ -52,6 +52,7 @@ src/app/
   schemas/         # shared pydantic models
 {% if include_email %}  email/           # provider-agnostic EmailPort + SMTP/SES adapters + templates (email extra)
 {% endif %}{% if include_jobs %}  jobs/            # arq worker + enqueue seam + tasks + cron schedule (worker extra)
+{% endif %}{% if include_observability %}  observability/   # OTel three pillars + /healthz + /readyz + Sentry (observability extra)
 {% endif %}tests/
 ```
 
@@ -224,6 +225,43 @@ to create them.{% elif include_users %}An initial migration for the `items` + `u
 `migrations/versions/` — run `just migrate` to create them.{% else %}`migrations/versions/`
 starts empty: generate your first migration with `just migration "initial schema"`,
 review it, then `just migrate`.{% endif %}
+
+{% endif %}
+{% if include_observability %}
+## Observability (OpenTelemetry — three pillars)
+
+Full OpenTelemetry: **traces, metrics and logs** export over OTLP, correlated. FastAPI and
+httpx are auto-instrumented{% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}, along with SQLAlchemy{% endif %}{% if include_cache or include_jobs or include_webhooks %} and Redis{% endif %}; every
+structlog line emitted inside a request carries the active span's `trace_id` / `span_id`, so a
+log links straight to its trace.
+
+**Nothing exports until you configure it** — set `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g.
+`http://localhost:4318`) and the three pillars start flowing; leave it unset and a fresh service
+runs clean with no collector. Error reporting is opt-in too: set `SENTRY_DSN` to turn on Sentry
+(unhandled exceptions are recorded on the span regardless).
+
+Endpoints (always mounted):
+
+```
+GET /healthz   # liveness — 200 while the process is up
+GET /readyz    # readiness — probes {% if include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks %}the database{% endif %}{% if (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks) and (include_cache or include_jobs or include_webhooks) %} + {% endif %}{% if include_cache or include_jobs or include_webhooks %}Redis{% endif %}{% if not (include_db or include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_cache or include_jobs or include_webhooks) %}its dependencies{% endif %}, 503 if any is down
+GET /metrics   # Prometheus (default HTTP + process/runtime metrics)
+```
+
+### Local stack
+
+`just observe` brings up a full local view via a compose profile — **OTel Collector +
+Prometheus + Tempo + Loki + Grafana**, datasources and a starter dashboard pre-provisioned:
+
+```bash
+just observe                                          # docker compose --profile observability up
+# then point the app at the collector, in .env:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   # compose `api`
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318        # `just run` on the host
+```
+
+Open Grafana at <http://localhost:3000> (anonymous admin) — metrics in Prometheus, traces in
+Tempo, logs in Loki, all correlated. Stack config lives in `observability/`.
 
 {% endif %}
 ## Tasks (`just`)

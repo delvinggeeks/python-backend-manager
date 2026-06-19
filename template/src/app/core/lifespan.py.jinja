@@ -24,3 +24,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         log.info("shutdown")
         # Dispose pools/clients here.
+{% if include_observability %}
+        # Flush any buffered traces/metrics/logs before the process exits.
+        from app.observability import shutdown_observability
+
+        shutdown_observability()
+{% endif %}

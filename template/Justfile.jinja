@@ -45,6 +45,15 @@ docker-build:
 
 docker-up:
     docker compose up --build
+{% if include_observability %}
+
+# Local observability stack: OTel Collector + Prometheus + Tempo + Loki + Grafana (three
+# pillars). Grafana (pre-provisioned) -> http://localhost:3000. Wire the app up by setting
+# OTEL_EXPORTER_OTLP_ENDPOINT in .env: http://otel-collector:4318 for the compose `api`, or
+# http://localhost:4318 for `just run` on the host.
+observe:
+    docker compose --profile observability up
+{% endif %}
 {% if include_jobs or include_webhooks %}
 
 # Background worker (arq) — processes the jobs queue + runs the cron schedule.

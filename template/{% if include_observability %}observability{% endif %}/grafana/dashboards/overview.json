@@ -1,0 +1,46 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Targets up (Prometheus)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "up", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "Logs (Loki)",
+      "type": "logs",
+      "options": { "showTime": true, "wrapLogMessage": true },
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "Loki" }, "expr": "{service_name=~\".+\"}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "Tempo" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 3,
+      "title": "Recent traces (Tempo)",
+      "type": "table",
+      "targets": [
+        { "datasource": { "type": "tempo", "uid": "Tempo" }, "queryType": "traceqlSearch", "limit": 20, "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["observability", "starter"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "",
+  "title": "Service Overview",
+  "uid": "service-overview",
+  "version": 1
+}

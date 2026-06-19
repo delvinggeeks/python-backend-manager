@@ -155,6 +155,13 @@ jobs:
           # org.created / member.added flows record audit entries, member.added fans out a webhook,
           # and each delivery attempt is recorded to the audit log — the full cross-module path.
           - { capability: audit_webhooks, data: "--data include_audit=true --data include_webhooks=true --data include_rbac=true", extras: "--extra db --extra users --extra worker" }
+          # Observability is capability-independent. The base row runs it ALONE at minimal deps
+          # (no db/users/jobs) so any dependency leak surfaces (the OTel SDK + Prometheus + Sentry
+          # install and import, /healthz + /readyz + /metrics serve, setup no-ops with no OTLP
+          # endpoint). The _full row adds db + users + jobs so the SQLAlchemy + Redis
+          # auto-instrumentation and the db/redis readiness probes are compiled and exercised.
+          - { capability: observability,      data: "--data include_observability=true", extras: "--extra observability" }
+          - { capability: observability_full, data: "--data include_observability=true --data include_db=true --data include_users=true --data include_jobs=true", extras: "--extra db --extra users --extra worker --extra observability" }
     steps:
       - uses: actions/checkout@v6
         with:

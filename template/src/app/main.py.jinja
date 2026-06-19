@@ -109,6 +109,15 @@ def create_app() -> FastAPI:
     app.include_router(storage_router, prefix="/storage", tags=["storage"])
 {% endif %}
 {% endif %}
+{% if include_observability %}
+    # Wired at construction (instrumentation middleware must be added before the app serves);
+    # the matching flush runs on shutdown in app.core.lifespan. Instruments FastAPI + httpx
+    # (+ SQLAlchemy/redis when present), mounts /healthz, /readyz and /metrics, and starts OTLP
+    # export only when OTEL_EXPORTER_OTLP_ENDPOINT is set. Sentry inits here too (no-op w/o DSN).
+    from app.observability import setup_observability
+
+    setup_observability(app)
+{% endif %}
     return app
 
 
