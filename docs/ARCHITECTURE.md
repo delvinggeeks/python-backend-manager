@@ -106,6 +106,12 @@ Legend: **status** = ✅ exists · ➕ build-now (this roadmap) · 🔌 seam-now
 | **PaymentsPort — crypto adapter** | 🔌 | BTCPay Server (self-host, non-custodial) + stablecoins; Beldex | NOWPayments / Coinbase Commerce | `crypto_provider` (⚠ D14) |
 | **DomainPort** (custom domains + auto-TLS) | 🔌 | Caddy on-demand TLS (self-host); `domains` table; Host→tenant→RLS | Approximated.app / Cloudflare for SaaS | `domain_strategy` (D17) |
 | **SeoMetadataPort · RedirectPort** (backend SEO) | 🔌/➕ | in-process sitemap/robots/canonical/301; JSON-LD seam | `fastapi-sitemap`; SSR frontend renders | `include_seo` |
+| **TaxPort** + InvoiceGenerator | ➕ | self-calc India GST + GSTN e-invoicing; WeasyPrint invoice | Stripe Tax / Anrok / Avalara | `tax_engine` (⚖ D18) |
+| **AnalyticsPort · ReportPort** | ➕ | Postgres continuous aggregates (RLS); WeasyPrint/Polars export | DuckDB / ClickHouse / Cube / Metabase | `include_analytics` |
+| **OAuth2.1 provider · ConnectorPort · inbound-webhook** | 📋 | Authlib (self-host); OpenAPI-gen SDKs; Scalar portal | Authentik · Speakeasy · ReadMe · Svix | `include_oauth_provider` |
+| **LocalizationPort** + money/tz | 🔌 | Babel/gettext; JSONB content; py-moneyed; zoneinfo | Weblate (translation server) | `include_localization` |
+| **MediaProcessingPort** | 🔌 | presign+magic-byte; ClamAV; pyvips; Docling OCR | imgproxy · VirusTotal · managed | `include_media_processing` |
+| **Tenant lifecycle** (state machine) | ➕ | provision→trial→suspend→offboard→delete; PaymentsPort proration; DPDP purge | SCIM (enterprise) | `include_tenant_lifecycle` |
 
 The catalog is the contract surface: a new phase adds *at most* a port + a default adapter + a
 toggle; it never wires a vendor SDK into a handler. The **AI-native application layer** (LLM gateway,

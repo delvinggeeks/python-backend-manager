@@ -325,3 +325,63 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
   technique.
 - **Swap path:** `SeoMetadataPort` for structured-data; per-domain sitemaps compose with `DomainPort`
   (ADR-28).
+
+## ADR-30 — Tax & invoicing compliance
+- **Default:** **`TaxPort` + self-calc** for India (GST 18%, SAC-998361, place-of-supply, GSTIN
+  validation, sequential numbering) + a **GSTN IRP e-invoicing/IRN** adapter; compliant invoice PDF via
+  **WeasyPrint**.
+- **Alternatives:** **Stripe Tax** (0.5%/tx, if on Stripe), **Anrok** (SaaS-native, exposure
+  monitoring), **Avalara** (enterprise) — global VAT (OSS/VIES) + US nexus.
+- **Cost:** self-calc ≈ ₹0 + a GSP/CA (~₹50k-1L/yr); managed 0.5-1.5% of revenue.
+- **Why:** India e-invoicing is a **legal requirement at AATO ≥₹5Cr** (30-day rule) that no global
+  engine fully owns — own the India path, seam managed engines for global. (D18.)
+- **Swap path:** `tax_engine` setting → self-calc / stripe-tax / anrok / avalara.
+
+## ADR-31 — Analytics & reporting
+- **Default:** `AnalyticsPort` over **Postgres-native continuous aggregates / TimescaleDB** (RLS-scoped)
+  + `ReportPort` (**WeasyPrint** PDF, **Polars** Excel/CSV, streaming exports, arq-scheduled).
+- **Alternatives:** **DuckDB** embedded (tenant dashboards), **ClickHouse** (>1M events/day),
+  **Cube**/Metabase (semantic/embedded BI), PostHog (product analytics).
+- **Cost:** Postgres-native ≈ ₹0; ClickHouse/Cube add infra/ops only past real scale.
+- **Why:** stay in Postgres until event volume forces an OLAP store; reports ride existing libs + jobs.
+- **Swap path:** `AnalyticsPort` → ClickHouse adapter; `ReportPort` formats.
+
+## ADR-32 — Public API / developer platform
+- **Default:** **Authlib** OAuth2.1 provider (self-host, BSD) + an **inbound-webhook receiver**
+  (HMAC → outbox) + **OpenAPI Generator** SDKs in CI (Apache-2) + **Scalar** dev portal (self-host).
+- **Alternatives:** Authentik (managed-ish AS, ties to D3); **Speakeasy/Stainless** SDKs ($/lang);
+  **ReadMe** portal; **Svix** for webhook replay-UI; Kong/APISIX gateway at scale.
+- **Cost:** all-self-host ≈ ₹0; managed seams $/mo only when SDK/docs/replay become products.
+- **Why:** turns the SaaS into a platform with zero new infra; managed tooling is a later differentiator.
+- **Swap path:** `oauth_provider` / `developer_portal` settings; `sdk` CI step.
+
+## ADR-33 — i18n / l10n / multi-currency / timezones
+- **Default:** `LocalizationPort` + **Babel/gettext** strings, **JSONB-per-locale** content,
+  **py-moneyed + Decimal** money (never float), **zoneinfo** UTC-storage timezones; **Frankfurter/ECB**
+  FX; **Weblate** self-host as the translation-mgmt seam.
+- **Alternatives:** Tolgee (TMS); Crowdin/Phrase (managed); translation tables (vs JSONB) for 100+ langs.
+- **Cost:** ≈ ₹0 (stdlib + OSS); Weblate self-host ~₹60-120/yr VM.
+- **Why:** correct money/time/locale handling is cheap to do right and catastrophic to retrofit; RTL/
+  display is the frontend's.
+- **Swap path:** `LocalizationPort` → Weblate adapter; FX provider setting.
+
+## ADR-34 — File / media processing
+- **Default:** `MediaProcessingPort` — presigned upload + **magic-byte validation** + **ClamAV**
+  self-host malware scan (quarantine + audit) + **pyvips** image processing; **Docling/Tesseract** OCR
+  (ties to RAG).
+- **Alternatives:** **imgproxy** sidecar (on-the-fly resize at scale); VirusTotal (non-PII only —
+  shares files); managed Cloudflare Images / video transcoding (out-of-scope).
+- **Cost:** ClamAV + pyvips ≈ infra only; managed per-op at scale.
+- **Why:** malware scanning is a real upload-security gate (DPDP); pyvips is ~10× Pillow at <50MB RAM;
+  all self-hostable.
+- **Swap path:** scan/image/doc adapters behind the port; imgproxy/managed as seams.
+
+## ADR-35 — Tenant lifecycle & onboarding
+- **Default:** a Postgres-backed **tenant state machine** (provision → trial → suspend → offboard →
+  delete) + arq-driven trial expiry + **PaymentsPort proration** + DPDP **export-then-purge** offboarding
+  with **1-yr audit retention**.
+- **Alternatives:** SCIM for enterprise directory-sync (seam); managed onboarding tools (overkill).
+- **Cost:** ≈ ₹0 (state + middleware + jobs).
+- **Why:** lifecycle + compliant offboarding is core multi-tenant plumbing; composes P16 (data-rights)
+  rather than reinventing it.
+- **Swap path:** lifecycle service; SCIM adapter when an enterprise needs directory sync.

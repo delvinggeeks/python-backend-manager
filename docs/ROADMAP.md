@@ -435,6 +435,84 @@ on-page meta, and Core-Web-Vitals-frontend** (out of scope — separate repo).
 
 ---
 
+## Wave 8 — platform completeness (the final no-gaps sweep)
+
+The remaining genuine platform subsystems found by an adversarial audit ([COMPLETENESS-AUDIT.md](COMPLETENESS-AUDIT.md)).
+
+### P33 · Tax & invoicing compliance  🔴 (India e-invoicing is a legal requirement)
+- **Scope:** a **`TaxPort`** behind the billing layer (calculate tax for a sale; validate tax-ids;
+  generate compliant invoice). Default = **self-calc** (India **GST 18%**, SAC-998361, place-of-supply
+  B2B/B2C, **GSTIN validation**, sequential numbering, retention) + a **GSTN IRP e-invoicing/IRN**
+  adapter (**mandatory at AATO ≥₹5Cr**, 30-day rule); compliant **invoice PDF** (WeasyPrint). Managed
+  seams: **Stripe Tax / Anrok / Avalara**; global **VAT (OSS/VIES)** + **US nexus**.
+- **Toggle/Port:** `include_tax` (implies billing); `TaxPort`, `tax_engine` setting; `InvoiceGenerator`.
+- **Implies/Deps:** billing/payments. India e-invoicing flagged in **D18**.
+- **DoD:** correct GST per place-of-supply; GSTIN validation; sequential gap-free invoice numbers;
+  compliant PDF; IRN adapter stubbed/mocked; VAT/nexus via the managed seam. Golden-invoice + tax-calc tests.
+- **CI:** `tax` row (billing) — GST calc + GSTIN-validate + invoice-numbering (mocked IRP).
+
+### P34 · Analytics & reporting  🟠
+- **Scope:** `AnalyticsPort` (per-tenant metrics/time-series — **Postgres-native continuous aggregates /
+  TimescaleDB**, RLS-isolated) + `ReportPort` (**WeasyPrint** PDF, **Polars** Excel/CSV, **streaming
+  exports**, **scheduled reports** via arq). Event rollup tables. Seams: DuckDB embedded dashboards,
+  Metabase/Cube embedded, ClickHouse (>1M events/day).
+- **Toggle/Port:** `include_analytics`, `include_reports`; `AnalyticsPort`, `ReportPort`.
+- **Implies/Deps:** db (+ cache); jobs (scheduled reports). DPDP: data-classification on event schema.
+- **DoD:** time-series query + dimensional breakdown (RLS-scoped); streaming CSV/XLSX export (memory-safe);
+  scheduled PDF via worker; mocked data in CI.
+- **CI:** `analytics` row — aggregate query + streaming export + PDF render.
+
+### P35 · Public API / developer platform  🟠
+- **Scope:** be an **OAuth 2.1 / OIDC provider** (Authlib + `oauth_clients`/consent tables;
+  `/oauth/authorize|token|revoke`) so third-party apps act on behalf of users (the *provider* side of
+  `AuthnPort`); a generalized **inbound-webhook receiver** (HMAC verify → outbox P5) + **app registry /
+  marketplace** seam; **SDK generation in CI** (OpenAPI Generator default; Speakeasy seam); a
+  self-host **Scalar** developer portal; `ConnectorPort` for native connectors.
+- **Toggle/Port:** `include_oauth_provider`, `include_inbound_webhooks`, `include_sdk_generation`,
+  `developer_portal` setting.
+- **Implies/Deps:** users (OAuth); db (app registry); P17/P8/P7 (versioning/quota/metering); P1/P5 (webhooks).
+- **DoD:** authorization-code+PKCE flow (mock client); token issue/revoke; inbound webhook HMAC-verify→outbox;
+  app registry CRUD + revoke; SDK generated in CI; Scalar docs served. No live third-party in CI.
+- **CI:** `dev_platform` row — OAuth flow + inbound-webhook verify + SDK-gen smoke.
+
+### P36 · i18n / l10n / multi-currency / timezones  🟠
+- **Scope:** `LocalizationPort` — backend string i18n (**Babel/gettext**, ICU plurals), locale
+  resolution middleware (Accept-Language → user → org → default), **JSONB-per-locale** translatable
+  content; **multi-currency** money type (**py-moneyed + Decimal**, never float), per-region pricing,
+  FX-rate source (Frankfurter/ECB); **timezones** (UTC storage + `zoneinfo` per-user). Translation-mgmt
+  seam = **Weblate** self-host. Out-of-scope: RTL/number-date display (frontend).
+- **Toggle/Port:** `include_localization`; `LocalizationPort`, money type, locale middleware.
+- **Implies/Deps:** none core (db for content/prefs). Ties to billing/tax (currency) + SEO (hreflang P32).
+- **DoD:** locale resolves + fallback chain; translated email/error strings; JSONB content served per
+  locale; money math currency-safe; UTC stored + tz-converted on read. Babel extract/compile in CI.
+- **CI:** `localization` row — locale-resolution + money-currency-safety + tz-conversion tests.
+
+### P37 · File / media processing  🟠 (malware scan = security gate)
+- **Scope:** `MediaProcessingPort` on top of object storage — **presigned direct-to-S3 upload** +
+  **magic-byte/content-type validation** + size limits; **malware/virus scanning** (**ClamAV**
+  self-host default; VirusTotal seam) with **quarantine + audit** (a real security gate); **image
+  processing** (**pyvips** in-process / **imgproxy** sidecar — resize/convert/optimize); **document
+  OCR** (**Docling**/Tesseract → ties to RAG P23). Video transcoding = out-of-scope (managed seam).
+- **Toggle/Port:** `include_media_processing` (implies storage); `MediaProcessingPort` + scan/image/doc adapters.
+- **Implies/Deps:** storage; jobs (post-upload worker). Malware scan ties to P29 (untrusted input) + audit.
+- **DoD:** presign + magic-byte reject of spoofed types; ClamAV scan → quarantine + audit on infected
+  (mock clamd in CI); pyvips resize/convert; OCR extract (mock). No live AV/network in CI.
+- **CI:** `media` row (storage) — validation-reject + scan-quarantine + resize (mocked).
+
+### P38 · Tenant lifecycle & onboarding automation  🟠
+- **Scope:** a tenant **state machine** (`PENDING_PAYMENT → ACTIVE → TRIAL → SUSPENDED → OFFBOARDED →
+  DELETED`) + provisioning (create org → seed defaults → first-admin invite), **trial** management +
+  expiry (arq scheduler), **plan up/downgrade + proration** (via PaymentsPort/Stripe), **suspension/
+  reactivation** (status middleware, data preserved), and **DPDP offboarding** (export-window → purge,
+  cascade delete + S3 cleanup, **1-yr audit-log retention**) — composes P16 (data-rights) + audit.
+- **Toggle/Port:** `include_tenant_lifecycle` (implies tenancy + billing); lifecycle service + state enum.
+- **Implies/Deps:** tenancy; billing (trial/plan/proration); **P16** (export/erasure); audit.
+- **DoD:** state transitions audited; trial-expiry job; up/downgrade proration via the payments port;
+  suspend blocks writes/allows reads; offboard exports-then-purges with retained audit trail. Mocked clock/Stripe.
+- **CI:** `tenant_lifecycle` row — state-machine transitions + suspend-blocks-writes + offboard-purge tests.
+
+---
+
 ## Deliberately deferred (seams exist; do NOT build until a real trigger)
 
 Listed so "not building these" is a *recorded decision*, not an omission ([PRINCIPLES.md#P9](PRINCIPLES.md)):
@@ -463,6 +541,12 @@ Listed so "not building these" is a *recorded decision*, not an omission ([PRINC
 | Managed custom-domains (Cloudflare-for-SaaS/Approximated) | `DomainPort` (P31) | scale/ops beyond self-host Caddy, or DDoS need |
 | **Frontend SEO**: rendering, meta-injection, content, Core-Web-Vitals-frontend, prerendering | frontend repo (SSR/SSG) | **out of scope** — not a backend-template concern |
 | pSEO content generation (the pages themselves) | `SeoMetadataPort` data (P32) | a content/product decision |
+| Managed tax (Stripe Tax/Anrok/Avalara) | `TaxPort` (P33) | global VAT/nexus complexity or scale |
+| ClickHouse / Cube / Metabase analytics | `AnalyticsPort` (P34) | >1M events/day or formal BI contract |
+| Speakeasy SDKs · ReadMe portal · Svix · Authentik | P35 seams | SDK-as-product / enterprise SSO / replay-UI need |
+| Weblate translation server · managed FX | `LocalizationPort` (P36) | translators join / high FX volume |
+| imgproxy sidecar · Docling OCR · video transcoding | `MediaProcessingPort` (P37) | resize >1M/day · RAG docs · video (managed) |
+| SCIM provisioning | tenant-lifecycle (P38) + P13 | enterprise directory-sync deal |
 
 ---
 
@@ -487,6 +571,9 @@ Wave 6:       P27 Real-time (needs P5+cache) · P28 Mobile/BFF (needs users+P9)
               P29 Agent-safety ⭐ (needs P10/P26/P1/P21 — GATES production agents)
               P30 Crypto payments (needs billing; ⚠ D14 compliance gate)
 Wave 7:       P31 Custom domains+auto-TLS (needs tenancy+P4) ─► P32 Backend SEO (per-domain sitemaps)
+Wave 8:       P33 Tax+invoicing ⚖ (needs billing; ⚠ D18 India e-invoicing) · P34 Analytics+reporting
+              P35 Public-API/dev-platform (OAuth provider; needs users) · P36 i18n/l10n/currency/tz
+              P37 Media processing (malware scan; needs storage) · P38 Tenant lifecycle (needs tenancy+billing+P16)
 ```
 
 Waves 0-1 are parallel-safe; Wave 2 gates Wave 3; Wave 4 is value-ordered and largely independent

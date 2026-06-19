@@ -52,6 +52,8 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
 - `docs/GAP-ANALYSIS.md` — what's BUILD-NOW vs SEAM-NOW vs FINE-AS-IS, and why (incl. gold-plating
   explicitly rejected — don't build the deferred items without a real trigger).
 - `docs/COVERAGE-MATRIX.md` — the 360° subsystem checklist (shipped / spec'd / adding / gap / out-of-scope).
+- `docs/COMPLETENESS-AUDIT.md` — the adversarial *no-gaps proof*: every backend subsystem (A-K) specced,
+  or (L) consciously out-of-scope with reasoning. A living audit — a new subsystem becomes a phase.
 - `docs/CURRENT-STATE.md` — the inventory as of the spec.
 
 **Engineering-discipline layer (HOW each phase is built — full SDLC, every phase obeys these):**

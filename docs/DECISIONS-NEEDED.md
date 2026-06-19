@@ -191,6 +191,21 @@ flows** given India's VDA regime?
 (Backend SEO — P32 — has no founder decision: build the sitemap/robots/canonical/redirect primitives;
 the JSON-LD metadata is a seam; prerendering and all frontend/content SEO are explicitly out of scope.)
 
+## Wave 8 decision
+
+## D18 · Tax engine + India e-invoicing  ⚖️ (compliance, has a real fork)
+**Question:** default `TaxPort` = **self-calc (India GST)** + a GSTN e-invoicing adapter, or a managed
+engine (**Stripe Tax / Anrok / Avalara**)?
+- **Recommended default:** **self-calc for India** (own the GST + invoice numbering) and **seam a
+  managed engine** for global VAT/US-nexus when you sell cross-border. **Flag:** India **e-invoicing
+  via the GSTN IRP is mandatory once AATO ≥ ₹5 Cr** (30-day reporting rule) — build the IRN adapter
+  before you cross the threshold (and engage a GST Suvidha Provider / CA).
+- **Affects:** P33 default adapter + when the IRN adapter must ship.
+- **Need from you:** ✅ self-calc-India + managed-global-seam, or pick a managed engine now.
+
+(P34 analytics, P35 dev-platform, P36 i18n, P37 media, P38 tenant-lifecycle have sensible
+cost-effective defaults and no founder fork — they proceed on the recommended defaults.)
+
 ---
 
 ### How to respond
@@ -199,4 +214,5 @@ cost-effective, self-hostable, India-resident, low-lock-in option — so "all de
 shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases; **D9-D13 before Wave 5**
 (D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential);
 **D14-D16 before Wave 6** — **D14 (crypto + India compliance) is a legal/regulatory call, not just
-engineering, and is the one item where "default" needs your explicit sign-off**; **D17 before Wave 7**.
+engineering, and is the one item where "default" needs your explicit sign-off**; **D17 before Wave 7**;
+**D18 before Wave 8** (tax — and watch the India e-invoicing ₹5 Cr threshold).

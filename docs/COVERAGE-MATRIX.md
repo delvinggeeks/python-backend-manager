@@ -1,7 +1,8 @@
 # COVERAGE-MATRIX.md — the 360° SaaS-subsystem checklist
 
 > An honest, exhaustive cross-check: every subsystem a modern SaaS platform may need, mapped to its
-> status here. No hand-waving — if something is missing or out-of-scope, it says so. Legend:
+> status here. The adversarial *no-gaps proof* (every subsystem specced or consciously out-of-scope)
+> is [COMPLETENESS-AUDIT.md](COMPLETENESS-AUDIT.md). No hand-waving — if something is missing or out-of-scope, it says so. Legend:
 > **✅ shipped** (in the template today) · **📋 spec'd** (a ROADMAP phase) · **🆕 adding** (this round —
 > phases P27-P30, specs land as the in-flight research completes) · **➖ noted gap** (small fold or
 > deliberate defer) · **⛔ out-of-scope** (frontend/business/ops, not a backend-template concern).
@@ -72,7 +73,7 @@
 | Subsystem | Status | Where |
 |---|---|---|
 | Object storage (S3-compat; R2 zero-egress default) | ✅/📋 | `storage` + P20 |
-| Media processing (image resize / transcode / **virus-scan on upload**) | ➖ | noted gap — fold a `storage` processing seam into P20/P23 |
+| Media processing (image resize / **virus-scan on upload** / OCR) | 🆕 | P37 (`MediaProcessingPort`) — video transcoding stays ⛔ managed |
 | CDN | ➖ | via R2/edge (config, not code) |
 
 ## 8 · Observability & ops
@@ -116,7 +117,7 @@
 | Mobile apps (iOS/Android/PWA) — **backend support** | 🆕 | P28 |
 | Mobile apps — the app itself | ⛔ | frontend, separate repo |
 | Web frontend / SPA | ⛔ | frontend |
-| i18n / l10n + multi-currency | ➖ | deferred; multi-currency via payments port |
+| i18n / l10n + multi-currency + timezones (backend) | 🆕 | P36 (`LocalizationPort`) — RTL/display ⛔ frontend |
 
 ## 12 · Engineering discipline / SDLC (how it's built — full traceability)
 | Subsystem | Status | Where |
@@ -154,13 +155,19 @@
 | **P29** | AI agent **system safety** | `AgentPolicy` — least-privilege scoped tools, **HITL approval** for destructive actions, tool sandbox + egress control, per-agent spend/rate caps, immutable action audit (hardens P22/P26 + AuthorizationPort) | BUILD-NOW (security) |
 | **P30** | Crypto / blockchain payments | `PaymentsPort` crypto adapter — self-host **BTCPay Server** (non-custodial) default; **Beldex (BDX)** + stablecoins (USDC/USDT); idempotent on-confirmation webhook (reuse `ProcessedEvent`); **India VDA tax/FIU compliance = DECISIONS-NEEDED** | SEAM-NOW + ⚠ compliance |
 
-## Honest gaps remaining after P27-P30 (small folds / deliberate defers)
-- **Media processing** (upload virus-scan, image/video transform) → a `storage` processing seam (fold into P20/P23). Real but low-urgency.
-- **Frontend RUM + session replay** → OTel browser SDK / self-host OpenReplay; documented in P20 (frontend-adjacent).
-- **Synthetic / uptime monitoring** → mostly external (Uptime Kuma self-host); a doc, not template code.
-- **Generalized inbound-webhook receiving** → the billing webhook pattern + idempotency (P6) generalizes; fold a helper into P5/P6.
-- **i18n/l10n + multi-currency** → deferred; multi-currency rides the payments port; notification i18n is a NotificationPort concern.
-- **Frontend apps themselves** (web/mobile/desktop) → out of scope for a backend template (separate repos consume this backend).
+## Gaps from earlier rounds — now closed in Wave 8 (P33-P38)
+- **Tax & invoicing** (GST/e-invoicing/VAT) → **P33**. · **Analytics & reporting** (metrics + PDF/Excel)
+  → **P34**. · **Public API / OAuth-provider / SDKs / inbound-webhooks** → **P35**. · **i18n/l10n +
+  multi-currency + timezones** → **P36**. · **Media processing** (virus-scan/image/OCR) → **P37**. ·
+  **Tenant lifecycle + onboarding/offboarding** → **P38**.
+
+## Still deliberately out-of-scope (frontend / external — not gaps)
+- **Frontend RUM + session replay** → OTel browser SDK / self-host OpenReplay (frontend-adjacent; doc'd in P20).
+- **Synthetic / uptime monitoring** → external (Uptime Kuma self-host); a doc, not template code.
+- **Video transcoding** → managed (Cloudflare Stream / MediaConvert) seam, not a build (P37).
+- **Frontend apps themselves** (web/mobile/desktop), marketing site, content/SEO copy → separate repos.
+
+See [COMPLETENESS-AUDIT.md](COMPLETENESS-AUDIT.md) §L for the full out-of-scope list with reasoning.
 
 **Verdict:** with Wave 5 (AI) + P27-P30 (real-time, mobile, agent-safety, crypto) + the small folds
 above, the backend platform is **360° across every subsystem a modern SaaS needs** — robust where it

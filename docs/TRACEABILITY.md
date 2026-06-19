@@ -88,6 +88,12 @@ a phase or its pipeline" view. *(Sev/verdict in [GAP-ANALYSIS.md](GAP-ANALYSIS.m
 | MCP-srv | MCP server seam | `mcp_server` | Inspector schema; per-tenant filter; HITL/role-gate | stateless HTTP `/mcp` | per-tenant isolation |
 | P31 | DomainPort + auto-TLS | `custom_domains` | Host→tenant; allowlist-reject; verify (mock DNS/ACME) | `domains` table; Caddy on-demand TLS | cert-issue success; takeover alerts |
 | P32 | SEO (sitemap/robots/canonical/RedirectPort/SeoMetadataPort) | `seo` | sitemap/robots well-formed; canonical 301; JSON-LD schema-valid | none (in-process) | crawl coverage; TTFB |
+| P33 | TaxPort + InvoiceGenerator | `tax` | GST calc by place-of-supply; GSTIN-validate; gap-free numbering (mock IRP) | none | tax accuracy; invoice compliance |
+| P34 | AnalyticsPort + ReportPort | `analytics` | RLS aggregate; streaming export; PDF render | continuous-aggregate views | query latency; export size |
+| P35 | OAuth provider + inbound-webhook + SDK/portal | `dev_platform` | auth-code+PKCE; webhook HMAC→outbox; SDK-gen smoke | `oauth_clients`/`app_registry` tables | token issue/revoke; webhook dedupe |
+| P36 | LocalizationPort + money/tz | `localization` | locale resolve+fallback; currency-safe math; tz convert | none | locale coverage |
+| P37 | MediaProcessingPort | `media` | magic-byte reject; ClamAV quarantine; resize (mocked) | ClamAV/pyvips workers | infected-blocked; scan latency |
+| P38 | tenant lifecycle state machine | `tenant_lifecycle` | state transitions; suspend-blocks-writes; offboard-purge+retain-audit | status enum + logs | lifecycle correctness; erasure SLA |
 
 Every cell's "primary tests" run with **no live infra** (mocked provider / unreachable Redis / sqlite),
 per the P3 matrix — so the trace is verifiable in CI, not aspirational.
