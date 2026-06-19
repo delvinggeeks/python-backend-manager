@@ -86,6 +86,8 @@ a phase or its pipeline" view. *(Sev/verdict in [GAP-ANALYSIS.md](GAP-ANALYSIS.m
 | P29 ⭐ | AgentPolicy (system-safety) | `agent_safety` | capability-deny; arg-inject reject; spend-cap; approval | none (hooks) | denied-action count; spend caps |
 | P30 | PaymentsPort crypto adapter | `crypto_payments` | sig verify; idempotent on-confirmation (mock chain) | off-by-default; ⚠ D14 | confirmation dedupe |
 | MCP-srv | MCP server seam | `mcp_server` | Inspector schema; per-tenant filter; HITL/role-gate | stateless HTTP `/mcp` | per-tenant isolation |
+| P31 | DomainPort + auto-TLS | `custom_domains` | Host→tenant; allowlist-reject; verify (mock DNS/ACME) | `domains` table; Caddy on-demand TLS | cert-issue success; takeover alerts |
+| P32 | SEO (sitemap/robots/canonical/RedirectPort/SeoMetadataPort) | `seo` | sitemap/robots well-formed; canonical 301; JSON-LD schema-valid | none (in-process) | crawl coverage; TTFB |
 
 Every cell's "primary tests" run with **no live infra** (mocked provider / unreachable Redis / sqlite),
 per the P3 matrix — so the trace is verifiable in CI, not aspirational.

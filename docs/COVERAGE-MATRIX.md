@@ -129,9 +129,16 @@
 | Custom MCP servers (FastMCP, OAuth2.1, per-tenant) | 📋 | [MCP-SERVERS.md](MCP-SERVERS.md) |
 | Threat modeling (STRIDE per component) · ADRs · contract tests · SLOs | 📋 | SDLC.md + per-phase |
 
-## 13 · Growth / business (mostly external SaaS, not template code)
+## 13 · Growth & distribution (backend surface)
 | Subsystem | Status | Where |
 |---|---|---|
+| **Custom domains + automated TLS** (white-label, per-tenant) | 🆕 | P31 (`DomainPort`) |
+| Backend SEO — **sitemap.xml / robots.txt** (per-tenant/domain) | 🆕 | P32 |
+| Backend SEO — **canonical / trailing-slash / 301 redirects** | 🆕 | P32 (`RedirectPort`) |
+| Backend SEO — **JSON-LD / OG / hreflang metadata API** | 🆕 | P32 (`SeoMetadataPort`, seam) |
+| Programmatic-SEO data serving + thin-content audit | 🆕 | P32 (seam) |
+| TTFB / Core-Web-Vitals (backend contribution) | ✅/📋 | caching P20 + observability |
+| **Frontend SEO** (rendering, meta-injection, content, CWV-frontend, prerendering) | ⛔ | frontend repo (SSR/SSG) — Google deprecated dynamic rendering 2025 |
 | Product analytics (PostHog) | ➖ | seam via FeatureFlagPort/events; mostly external |
 | A/B testing | 📋 | P18 (flags) + P26 (prompts) |
 | CRM · helpdesk · marketing site · status page | ⛔ | external SaaS / ops |

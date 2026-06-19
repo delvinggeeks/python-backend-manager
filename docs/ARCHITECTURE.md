@@ -104,6 +104,8 @@ Legend: **status** = ✅ exists · ➕ build-now (this roadmap) · 🔌 seam-now
 | **Mobile**: MobileConfig · Attestation · SyncPort | 🔌 | version-gate + Play-Integrity/App-Attest verify + APNs; `SyncPort` stub | PowerSync / ElectricSQL (offline sync) | `include_mobile` / `sync_engine` |
 | **AgentPolicy** (agent system-safety) | ➕ | least-privilege capability tokens + HITL + spend cap + audit (hooks on existing ports) | Cerbos (authz) · Lakera (scanning) · SPIFFE (identity) · sandbox | ships with agents |
 | **PaymentsPort — crypto adapter** | 🔌 | BTCPay Server (self-host, non-custodial) + stablecoins; Beldex | NOWPayments / Coinbase Commerce | `crypto_provider` (⚠ D14) |
+| **DomainPort** (custom domains + auto-TLS) | 🔌 | Caddy on-demand TLS (self-host); `domains` table; Host→tenant→RLS | Approximated.app / Cloudflare for SaaS | `domain_strategy` (D17) |
+| **SeoMetadataPort · RedirectPort** (backend SEO) | 🔌/➕ | in-process sitemap/robots/canonical/301; JSON-LD seam | `fastapi-sitemap`; SSR frontend renders | `include_seo` |
 
 The catalog is the contract surface: a new phase adds *at most* a port + a default adapter + a
 toggle; it never wires a vendor SDK into a handler. The **AI-native application layer** (LLM gateway,

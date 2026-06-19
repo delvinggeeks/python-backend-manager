@@ -295,3 +295,33 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
   this a deliberate compliance decision (D14) — ship off-by-default.**
 - **Swap path:** `crypto_provider` setting → BTCPay / NOWPayments / Coinbase adapters; `PaymentsPort`
   unchanged.
+
+## ADR-28 — Custom domains + automated TLS
+- **Default:** **`DomainPort` + Caddy on-demand TLS / CertMagic** (self-host, MIT/Apache-2) — ACME
+  cert issuance at scale with an ask-endpoint that verifies domain ownership before issuing; Host-header
+  → tenant resolution feeding RLS; a `domains` table + DNS TXT/CNAME verification.
+- **Alternatives:** **Approximated.app** (managed, ~$20/mo + ~$0.10/domain, self-host option, low
+  lock-in — the recommended *managed* seam for bootstrap); **Cloudflare for SaaS** (first 100 free then
+  $0.10/domain; Enterprise $5-15k/mo at scale + high lock-in/DDoS upside); **cert-manager** (K8s-native,
+  only if already on K8s).
+- **Cost:** Caddy self-host ≈ infra only (marginal ~₹0/domain) + DIY renewal-uptime ops; Approximated
+  ≈ breakeven ~300 domains; Cloudflare free <100 then flat per-domain.
+- **Why:** Caddy gives full control + India residency (DPDP) + no per-domain fee; Approximated removes
+  ops with low lock-in; Cloudflare only when DDoS/global-edge justifies the contract. Security
+  (subdomain-takeover, host-header allowlist) is part of the phase, not optional.
+- **Swap path:** `domain_strategy` setting → caddy|approximated|cloudflare adapters behind `DomainPort`.
+
+## ADR-29 — Backend SEO surface
+- **Default:** ship the **backend-owned** SEO primitives — dynamic per-tenant/per-domain **sitemap.xml**
+  (+ sitemap-index) + **robots.txt**, **canonical/trailing-slash** middleware, a **`RedirectPort`** 301
+  manager — all in-process (no new infra); a **`SeoMetadataPort`** (JSON-LD/schema.org + OG + hreflang)
+  as a seam for an SSR/SSG frontend.
+- **Alternatives:** `fastapi-sitemap` or a custom async route (sitemaps); Pydantic→JSON-LD serializer
+  (structured data). **Prerendering** (Rendertron / Prerender.io) is **rejected/out-of-scope** —
+  dynamic rendering is deprecated (Google 2025) and frontend SSR/SSG is the correct, cheaper answer.
+- **Cost:** ≈ ₹0 (in-process; rides existing cache/observability for TTFB).
+- **Why:** the backend is the *source of truth* for sitemaps/canonical/structured-data; the frontend
+  renders. Building prerendering into the backend would be ops-heavy gold-plating for a deprecated
+  technique.
+- **Swap path:** `SeoMetadataPort` for structured-data; per-domain sitemaps compose with `DomainPort`
+  (ADR-28).

@@ -175,10 +175,28 @@ flows** given India's VDA regime?
 
 ---
 
+## Wave 7 decision (growth & distribution)
+
+## D17 · Custom-domain strategy
+**Question:** default `DomainPort` adapter = **self-host Caddy on-demand TLS**, or a managed seam
+(**Approximated.app** / **Cloudflare for SaaS**)?
+- **Recommended default:** **Caddy self-host** if India residency (DPDP) or per-domain cost matters and
+  you have minimal ops; **Approximated** as the low-ops, low-lock-in managed seam for bootstrap;
+  Cloudflare-for-SaaS only when DDoS/global-edge justifies the contract.
+- **Why:** Caddy = ₹0/domain + India-resident certs but you own renewal-uptime; Approximated = near-zero
+  ops, ~$20/mo + ~$0.10/domain, self-host exit; Cloudflare = lock-in + $5-15k/mo Enterprise at scale.
+  Tied to D2 (hosting/residency).
+- **Need from you:** ✅ Caddy-self-host default, or name the managed seam.
+
+(Backend SEO — P32 — has no founder decision: build the sitemap/robots/canonical/redirect primitives;
+the JSON-LD metadata is a seam; prerendering and all frontend/content SEO are explicitly out of scope.)
+
+---
+
 ### How to respond
 A one-line answer per item (or "all defaults") unblocks the build. Defaults are chosen to be the
 cost-effective, self-hostable, India-resident, low-lock-in option — so "all defaults" is a coherent,
 shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases; **D9-D13 before Wave 5**
 (D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential);
 **D14-D16 before Wave 6** — **D14 (crypto + India compliance) is a legal/regulatory call, not just
-engineering, and is the one item where "default" needs your explicit sign-off.**
+engineering, and is the one item where "default" needs your explicit sign-off**; **D17 before Wave 7**.

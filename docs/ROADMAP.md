@@ -390,6 +390,51 @@ cross-wave deps noted. **P29 is security-critical and gates production agents.**
 
 ---
 
+## Wave 7 — growth & distribution (custom domains, backend SEO)
+
+The acquisition/distribution surface (vs the production pipeline, which is covered). Scope discipline:
+the backend owns infrastructure + data + seams; **the frontend/marketing site owns rendering, content,
+on-page meta, and Core-Web-Vitals-frontend** (out of scope — separate repo).
+
+### P31 · Custom domains + automated TLS  🟠 (white-label + the SEO enabler)
+- **Scope:** `DomainPort` — per-tenant **subdomains** (`*.app.com`) **and customer custom domains**
+  (`app.theirbrand.com` via CNAME); a `domains` table (tenant, domain, verified, primary, strategy);
+  **Host-header → tenant** resolution feeding the tenant-context middleware + RLS (P4); **DNS TXT/CNAME
+  domain verification**; **automated certificate issuance at scale**. Default adapter = **Caddy
+  on-demand TLS / CertMagic** (self-host, ACME, ask-endpoint validates ownership before issuing);
+  managed seams = **Approximated.app** / **Cloudflare for SaaS**.
+- **Toggle/Port:** `include_custom_domains`; `DomainPort`, `domain_strategy` setting (caddy|approximated|cloudflare).
+- **Implies/Deps:** tenancy + **P4 RLS** (Host→tenant→RLS); ingress (Caddy/edge). DPDP: self-host
+  Caddy in an India DC for residency; managed = cross-border (D2/D17).
+- **Security (BUILD-NOW within the phase):** **host-header allowlist** (`TrustedHostMiddleware` against
+  verified domains — reject unknown Host), **dangling-DNS / subdomain-takeover** prevention
+  (require DNS-record removal before decommission, token rotation, periodic resolver audit, cert
+  revocation on takeover) — ties to P6/P29.
+- **DoD:** subdomain + custom-domain routing → correct tenant (RLS-scoped); DNS verification flow;
+  cert auto-issued/renewed via the default adapter (mocked ACME in CI); unknown Host rejected; per-tenant
+  isolation proven. No live ACME in CI.
+- **CI:** `custom_domains` row — Host→tenant resolution + allowlist-reject + verification-state tests (mocked DNS/ACME).
+
+### P32 · Backend SEO surface  🟡
+- **Scope (BUILD-NOW in-phase):** dynamic **`sitemap.xml`** (sitemap-index for >50k URLs, lastmod,
+  **per-tenant / per-domain** sitemaps, cached/regenerated) + **`robots.txt`** (per-tenant/per-env);
+  **canonical-URL + trailing-slash** normalization middleware; **301 redirect** manager (`RedirectPort`
+  + table, audited). **SEAM-NOW:** a **`SeoMetadataPort`** serving **JSON-LD (schema.org)** + Open
+  Graph + **hreflang/i18n** metadata for an SSR/SSG frontend to embed; pSEO **thin/duplicate-content
+  audit** (reporting, not a gate). **OUT-OF-SCOPE:** prerendering / dynamic-rendering for crawlers —
+  Google deprecated dynamic rendering (2025) and AI crawlers don't run JS, so the *frontend SSR/SSG*
+  owns rendering; the backend just serves the data + structured-data *source*.
+- **Toggle/Port:** `include_seo` (sitemap/robots/canonical/redirects); `SeoMetadataPort` (structured
+  data, seam); `seo_trailing_slash_mode` setting.
+- **Implies/Deps:** db; **pairs with P31** (per-custom-domain sitemaps + canonical). TTFB/Core-Web-Vitals
+  backend contribution already covered (caching P20 + observability).
+- **DoD:** valid sitemap-index + per-tenant sitemap; robots.txt per env; canonical/trailing-slash
+  enforced (301); redirect manager round-trips; JSON-LD endpoint returns valid schema.org; prerendering
+  documented as frontend-owned. Validated with golden-file sitemap/robots + schema validation.
+- **CI:** `seo` row — sitemap/robots well-formedness + canonical-redirect + JSON-LD schema-valid tests.
+
+---
+
 ## Deliberately deferred (seams exist; do NOT build until a real trigger)
 
 Listed so "not building these" is a *recorded decision*, not an omission ([PRINCIPLES.md#P9](PRINCIPLES.md)):
@@ -415,6 +460,9 @@ Listed so "not building these" is a *recorded decision*, not an omission ([PRINC
 | Offline-first **sync engine** (PowerSync/ElectricSQL) | `SyncPort` (P28) | a mobile service needs offline |
 | Tool **sandbox** infra (Modal/gVisor/E2B) | MCPToolPort (P26/P29) | agents execute untrusted code |
 | Custodial crypto (Coinbase/BitPay) · INR off-ramp | `PaymentsPort` crypto (P30) | a deliberate compliance decision (D14) |
+| Managed custom-domains (Cloudflare-for-SaaS/Approximated) | `DomainPort` (P31) | scale/ops beyond self-host Caddy, or DDoS need |
+| **Frontend SEO**: rendering, meta-injection, content, Core-Web-Vitals-frontend, prerendering | frontend repo (SSR/SSG) | **out of scope** — not a backend-template concern |
+| pSEO content generation (the pages themselves) | `SeoMetadataPort` data (P32) | a content/product decision |
 
 ---
 
@@ -438,6 +486,7 @@ Wave 5 (AI):  P21 LLM-gateway+metering ⭐ (needs P7) ─┐
 Wave 6:       P27 Real-time (needs P5+cache) · P28 Mobile/BFF (needs users+P9)
               P29 Agent-safety ⭐ (needs P10/P26/P1/P21 — GATES production agents)
               P30 Crypto payments (needs billing; ⚠ D14 compliance gate)
+Wave 7:       P31 Custom domains+auto-TLS (needs tenancy+P4) ─► P32 Backend SEO (per-domain sitemaps)
 ```
 
 Waves 0-1 are parallel-safe; Wave 2 gates Wave 3; Wave 4 is value-ordered and largely independent
