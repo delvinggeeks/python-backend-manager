@@ -26,7 +26,18 @@ class Settings(BaseSettings):
     # --- Server ---
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # Locked down by default: no cross-origin browser access until you list trusted origins
+    # explicitly (e.g. CORS_ORIGINS=["https://app.example.com"]). Server/mobile clients are
+    # unaffected — CORS is browser-only. (A "*" origin with credentials is invalid anyway.)
+    cors_origins: list[str] = Field(default_factory=list)
+
+    # --- Security headers (safe-by-default; added to every response by the middleware) ---
+    #     Set SECURITY_HEADERS_ENABLED=false only if an edge proxy adds them. HSTS is sent
+    #     only in production (it needs HTTPS). The default CSP only forbids framing (anti-
+    #     clickjacking), so it never breaks /docs or /admin; tighten per service if you serve HTML.
+    security_headers_enabled: bool = True
+    security_csp: str = "frame-ancestors 'none'"
+    security_hsts_max_age: int = 63072000  # 2 years, in seconds
 
     # --- Datastores (only used if the `db` / `cache` extras are installed) ---
     database_url: str | None = None  # postgresql+asyncpg://user:pass@host:5432/db
