@@ -136,6 +136,13 @@ jobs:
           # SMTP *and* SES — exactly like billing + billing_razorpay (one matrix, not a leg).
           - { capability: email,     data: "--data include_email=true --data include_users=true", extras: "--extra db --extra users --extra email" }
           - { capability: email_ses, data: "--data include_email=true --data include_users=true --data email_provider=ses", extras: "--extra db --extra users --extra email" }
+          # Background jobs (arq) is db-independent, but we pair the base row with db so the
+          # unconditional alembic round-trip below still has a (trivially empty) chain to run.
+          # The jobs_email row turns on email + users so the user-manager hooks ENQUEUE the
+          # welcome / password-reset emails (instead of inline) and that wiring is compiled and
+          # tested — both jobs configs run as matrix rows, not a separate leg.
+          - { capability: jobs,       data: "--data include_jobs=true --data include_db=true", extras: "--extra db --extra worker" }
+          - { capability: jobs_email, data: "--data include_jobs=true --data include_email=true --data include_users=true", extras: "--extra db --extra users --extra email --extra worker" }
     steps:
       - uses: actions/checkout@v6
         with:

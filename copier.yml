@@ -195,6 +195,17 @@ email_provider:
   default: smtp
   when: "{{ include_email }}"
 
+include_jobs:
+  type: bool
+  help: >-
+    Scaffold background jobs + a scheduler (arq): an `app/jobs` package with a Redis-backed arq
+    worker (run with `just worker`), a thin `enqueue(...)` seam so routes/services queue work
+    without importing arq, an example task, and an example recurring job via arq's built-in cron.
+    arq is used directly (no runtime port — it's an infra choice, not a swappable vendor). When
+    the email capability is also on, the user-manager welcome / password-reset emails are sent
+    THROUGH the queue instead of inline. Implies the `worker` extra (arq); no database required.
+  default: false
+
 saas_extras:
   type: str
   help: >-
@@ -235,6 +246,7 @@ sync_extras:
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
     {% if include_email %}{% if 'email' not in parts %}{% set _ = parts.append('email') %}{% endif %}{% endif %}
+    {% if include_jobs %}{% if 'worker' not in parts %}{% set _ = parts.append('worker') %}{% endif %}{% endif %}
     {% for e in saas_extras %}{% if e not in parts %}{% set _ = parts.append(e) %}{% endif %}{% endfor %}
     {% if agent_framework != 'none' %}{% set _ = parts.append('llm') %}{% set _ = parts.append(agent_framework) %}{% endif %}
     {{ parts | join(' ') }}

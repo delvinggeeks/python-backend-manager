@@ -26,6 +26,18 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     async def on_after_register(self, user: User, request: Request | None = None) -> None:
         """Send a welcome email after a successful registration (suppressed if unconfigured)."""
+{% if include_jobs %}
+        from app.jobs.queue import enqueue
+
+        # Enqueue so a slow/failing email provider can't delay or break registration.
+        await enqueue(
+            "send_email_task",
+            to=user.email,
+            subject="Welcome to {{ project_name }}",
+            template="welcome",
+            context={"email": user.email, "project_name": "{{ project_name }}"},
+        )
+{% else %}
         from app.email.provider import get_email_provider
         from app.email.send import send_template
 
@@ -36,11 +48,24 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             template="welcome",
             context={"email": user.email, "project_name": "{{ project_name }}"},
         )
+{% endif %}
 
     async def on_after_forgot_password(
         self, user: User, token: str, request: Request | None = None
     ) -> None:
         """Email a password-reset token after a reset request (suppressed if unconfigured)."""
+{% if include_jobs %}
+        from app.jobs.queue import enqueue
+
+        # Enqueue so a slow/failing email provider can't delay or break the reset request.
+        await enqueue(
+            "send_email_task",
+            to=user.email,
+            subject="Reset your {{ project_name }} password",
+            template="password_reset",
+            context={"email": user.email, "token": token, "project_name": "{{ project_name }}"},
+        )
+{% else %}
         from app.email.provider import get_email_provider
         from app.email.send import send_template
 
@@ -51,6 +76,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             template="password_reset",
             context={"email": user.email, "token": token, "project_name": "{{ project_name }}"},
         )
+{% endif %}
 {% endif %}
 
 
