@@ -14,10 +14,12 @@ from datetime import datetime, timedelta
 import pytest
 import time_machine
 from httpx import AsyncClient
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from sqlalchemy import select
 
 from app.api_keys.models import ApiKey
-from app.api_keys.security import generate_key, hash_secret, utcnow
+from app.api_keys.security import generate_key, hash_secret, utcnow, verify_secret
 from app.db.models import Base
 from app.db.session import SessionFactory, engine
 from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
@@ -186,3 +188,14 @@ async def test_secret_is_never_persisted_in_plaintext(client: AsyncClient) -> No
     # Only the hash is stored — the row holds the SHA-256 digest, not the raw secret.
     assert row.hashed_secret != secret
     assert row.hashed_secret == hash_secret(secret)
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(secret=st.text(min_size=1))
+def test_secret_hash_roundtrip_and_determinism(secret: str) -> None:
+    # Property (Hypothesis drives many secrets): a secret verifies against its own hash, hashing is
+    # deterministic, and a different secret never verifies against it.
+    hashed = hash_secret(secret)
+    assert verify_secret(secret, hashed)
+    assert hash_secret(secret) == hashed
+    assert not verify_secret(secret + "x", hashed)

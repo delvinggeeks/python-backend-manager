@@ -19,6 +19,8 @@ import pytest
 import respx
 from arq import Retry
 from httpx import AsyncClient
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from redis.exceptions import RedisError
 from sqlalchemy import select
 
@@ -34,7 +36,7 @@ from app.users.models import User  # noqa: F401  (registers the user table)
 from app.webhooks import dispatch
 from app.webhooks.egress import WebhookEgressError, assert_public_url, resolve_pinned_target
 from app.webhooks.models import WebhookEndpoint
-from app.webhooks.security import SIGNATURE_HEADER, sign_payload
+from app.webhooks.security import SIGNATURE_HEADER, sign_payload, verify_signature
 
 
 class _FakePool:
@@ -394,3 +396,14 @@ async def test_deliver_webhook_does_not_follow_redirects() -> None:
 
     assert outbound.called  # POSTed once to the public endpoint
     assert not internal.called  # never chased the redirect to the internal host
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(secret=st.text(min_size=1), payload=st.binary())
+def test_signature_roundtrip_and_tamper(secret: str, payload: bytes) -> None:
+    # Property (Hypothesis drives many secret/payload pairs): a payload signed with a secret always
+    # verifies — both the bare-hex and the `sha256=` wire form — and a tampered payload never does.
+    sig = sign_payload(secret, payload)
+    assert verify_signature(secret, payload, sig)
+    assert verify_signature(secret, payload, f"sha256={sig}")
+    assert not verify_signature(secret, payload + b"x", sig)
