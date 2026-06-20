@@ -1,0 +1,44 @@
+[importlinter]
+root_package = app
+
+[importlinter:contract:core-foundation]
+name = core is the foundation layer (must not import the api or the composition root)
+type = forbidden
+source_modules =
+    app.core
+forbidden_modules =
+    app.api
+    app.main
+
+[importlinter:contract:api-no-main]
+name = the api layer must not import the composition root (app.main)
+type = forbidden
+source_modules =
+    app.api
+forbidden_modules =
+    app.main
+{% if include_billing %}
+
+[importlinter:contract:billing-port-only]
+name = billing app code must not import the vendor adapters directly (use the port/provider)
+type = forbidden
+source_modules =
+    app.billing.router
+    app.billing.dependencies
+    app.billing.entitlements
+forbidden_modules =
+    app.billing.adapters
+allow_indirect_imports = true
+{% endif %}
+{% if include_email %}
+
+[importlinter:contract:email-port-only]
+name = email app code must not import the vendor adapters directly (use the port/provider)
+type = forbidden
+source_modules =
+    app.email.send
+    app.email.templating
+forbidden_modules =
+    app.email.adapters
+allow_indirect_imports = true
+{% endif %}

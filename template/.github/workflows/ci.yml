@@ -56,3 +56,5 @@ jobs:
         run: uv run vulture src
       - name: Complexity (xenon — fail on any block worse than grade C)
         run: uv run xenon --max-absolute C --max-modules C --max-average B src
+      - name: Architecture boundaries (import-linter — ports/adapters discipline)
+        run: uv run lint-imports
