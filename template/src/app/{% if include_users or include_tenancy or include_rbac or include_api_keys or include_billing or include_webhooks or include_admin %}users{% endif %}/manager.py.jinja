@@ -24,7 +24,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     verification_token_secret = _settings.users_jwt_secret
 {% if include_email %}
 
-    async def on_after_register(self, user: User, request: Request | None = None) -> None:
+    async def on_after_register(self, user: User, _request: Request | None = None) -> None:
         """Send a welcome email after a successful registration (suppressed if unconfigured)."""
 {% if include_jobs %}
         from app.jobs.queue import enqueue
@@ -51,7 +51,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 {% endif %}
 
     async def on_after_forgot_password(
-        self, user: User, token: str, request: Request | None = None
+        self, user: User, token: str, _request: Request | None = None
     ) -> None:
         """Email a password-reset token after a reset request (suppressed if unconfigured)."""
 {% if include_jobs %}

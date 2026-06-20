@@ -16,7 +16,7 @@ from app.core.config import get_settings
 
 {% if include_observability %}
 def add_trace_context(
-    logger: object, method_name: str, event_dict: structlog.typing.EventDict
+    _logger: object, _method_name: str, event_dict: structlog.typing.EventDict
 ) -> structlog.typing.EventDict:
     """structlog processor: tag each log line with the active span's trace_id / span_id.
 

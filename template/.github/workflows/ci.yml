@@ -43,3 +43,16 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - run: uv run mypy src
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Dead code (vulture)
+        run: uv run vulture src
+      - name: Complexity (xenon — fail on any block worse than grade C)
+        run: uv run xenon --max-absolute C --max-modules C --max-average B src
