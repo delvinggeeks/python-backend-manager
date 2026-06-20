@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     log_json: bool = Field(default=False, description="Emit structured JSON logs.")
 
     # --- Server ---
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # noqa: S104  (binding all interfaces is intentional in a container)
     port: int = 8000
     # Locked down by default: no cross-origin browser access until you list trusted origins
     # explicitly (e.g. CORS_ORIGINS=["https://app.example.com"]). Server/mobile clients are
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # --- Users / auth (only used if the `users` extra is installed) ---
     #     Override USERS_JWT_SECRET in every non-local environment (>=32 bytes).
-    users_jwt_secret: str = "CHANGE_ME_dev_only_secret_override_in_prod"
+    users_jwt_secret: str = "CHANGE_ME_dev_only_secret_override_in_prod"  # noqa: S105
     users_jwt_lifetime_seconds: int = 3600
 {% endif %}
 {% if include_billing %}

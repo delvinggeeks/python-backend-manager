@@ -86,6 +86,8 @@ dev = [
     "anyio>=4.7",
     "ruff>=0.15",
     "mypy>=1.20",
+    "vulture>=2.13",
+    "xenon>=0.9",
     "pre-commit>=4.0",
     "faker>=33.0",
     "polyfactory>=2.18",
@@ -118,11 +120,13 @@ line-length = 100
 target-version = "py{{ python_version | replace('.', '') }}"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP", "ASYNC", "RUF", "SIM", "C4"]
+# S = flake8-bandit (Python SAST: hardcoded secrets, SQLi, unsafe deserialize, ...).
+select = ["E", "W", "F", "I", "B", "S", "UP", "ASYNC", "RUF", "SIM", "C4"]
 ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+# Tests legitimately hold asserts and hardcoded dummy secrets/passwords.
+"tests/*" = ["S101", "S105", "S106", "S107"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -137,3 +141,12 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q --cov=src/app --cov-report=term-missing"
+
+[tool.vulture]
+# Dead-code gate. min_confidence 80 keeps it false-positive-free on FastAPI/Pydantic patterns
+# (decorated routes, model fields). Run as `uv run vulture src`.
+min_confidence = 80
+# `ctx` is arq's job context — its WorkerCoroutine type Protocol REQUIRES that exact parameter
+# name, so it can't be `_`-prefixed; it's legitimately unused in trivial tasks/hooks. Narrow name,
+# safe to ignore globally (unlike a common name such as `request`, handled by `_`-prefix instead).
+ignore_names = ["ctx"]
