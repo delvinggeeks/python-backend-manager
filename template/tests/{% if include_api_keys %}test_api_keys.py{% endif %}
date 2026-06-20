@@ -9,9 +9,10 @@ and is never persisted in plaintext. Runs against the throwaway SQLite database 
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
+import time_machine
 from httpx import AsyncClient
 from sqlalchemy import select
 
@@ -135,6 +136,37 @@ async def test_expired_key_is_rejected(client: AsyncClient) -> None:
 
     r = await client.get("/whoami", headers={"X-API-Key": full_key})
     assert r.status_code == 401
+
+
+async def test_key_expiry_respects_frozen_time(client: AsyncClient) -> None:
+    # Travel ACROSS a fixed expiry boundary with a frozen clock: the key is accepted before its
+    # expiry and rejected after — proving the time-based transition, not just a pre-expired row.
+    # The key is inserted directly (API-key auth needs no JWT), so the frozen clock only drives the
+    # expiry check; a JWT minted at real time would itself look expired under a far-future clock.
+    user_id, token = await _register_and_login(client, "owner@example.com", "s3cret-passw0rd")
+    org_id = await _make_org(client, {"Authorization": f"Bearer {token}"})
+
+    full_key, prefix, hashed = generate_key()
+    async with SessionFactory() as session:
+        session.add(
+            ApiKey(
+                organization_id=uuid.UUID(org_id),
+                created_by_user_id=uuid.UUID(user_id),
+                name="short-lived",
+                prefix=prefix,
+                hashed_secret=hashed,
+                expires_at=datetime(2030, 1, 2, 0, 0, 0),
+            )
+        )
+        await session.commit()
+
+    with time_machine.travel("2030-01-01 12:00:00", tick=False):  # before expiry
+        r = await client.get("/whoami", headers={"X-API-Key": full_key})
+        assert r.status_code == 200, r.text
+
+    with time_machine.travel("2030-01-03 00:00:00", tick=False):  # after expiry
+        r = await client.get("/whoami", headers={"X-API-Key": full_key})
+        assert r.status_code == 401
 
 
 async def test_secret_is_never_persisted_in_plaintext(client: AsyncClient) -> None:
