@@ -89,6 +89,7 @@ dev = [
     "vulture>=2.13",
     "xenon>=0.9",
     "import-linter>=2.0",
+    "interrogate>=1.7",
     "pre-commit>=4.0",
     "faker>=33.0",
     "polyfactory>=2.18",
@@ -142,6 +143,18 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q --cov=src/app --cov-report=term-missing"
+
+[tool.interrogate]
+# Docstring-coverage gate (public API stays documented). Run as `uv run interrogate src`.
+fail-under = 80
+ignore-init-method = true
+ignore-magic = true
+ignore-nested-functions = true
+ignore-private = true
+ignore-semiprivate = true
+ignore-property-decorators = true
+ignore-overloaded-functions = true
+exclude = ["tests"]
 
 [tool.vulture]
 # Dead-code gate. min_confidence 80 keeps it false-positive-free on FastAPI/Pydantic patterns

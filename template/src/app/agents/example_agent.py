@@ -22,6 +22,7 @@ class AgentUnavailableError(RuntimeError):
 
 
 def resolve_model(tier: str) -> str:
+    """Map a tier name (fast/default/frontier) to the configured model id."""
     s = get_settings()
     return {"fast": s.model_fast, "frontier": s.model_frontier}.get(tier, s.model_default)
 

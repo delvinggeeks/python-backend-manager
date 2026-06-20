@@ -12,6 +12,7 @@ router = APIRouter()
 
 @router.post("", response_model=AgentResponse)
 async def run(req: AgentRequest) -> AgentResponse:
+    """Run the configured agent on the prompt; 503 when no backend is available."""
     try:
         output, model = await run_agent(req.prompt, tier=req.tier)
     except AgentUnavailableError as exc:

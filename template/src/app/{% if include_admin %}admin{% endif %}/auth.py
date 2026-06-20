@@ -41,6 +41,7 @@ class AdminAuth(AuthenticationBackend):
     """Gate the sqladmin panel on an active-superuser login."""
 
     async def login(self, request: Request) -> bool:
+        """Verify the login form; admit only active superusers (constant-time on failure)."""
         form = await request.form()
         email = str(form.get("username") or "").strip()
         password = str(form.get("password") or "")
@@ -66,10 +67,12 @@ class AdminAuth(AuthenticationBackend):
         return True
 
     async def logout(self, request: Request) -> bool:
+        """Clear the admin session."""
         request.session.clear()
         return True
 
     async def authenticate(self, request: Request) -> bool:
+        """Re-validate the session's superuser against the DB on every request."""
         user_id = request.session.get(_SESSION_KEY)
         if not user_id:
             return False

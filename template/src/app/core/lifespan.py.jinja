@@ -14,6 +14,7 @@ log = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Configure logging on startup and tear down resources on shutdown."""
     configure_logging()
     log.info("startup", app=app.title)
     # Place pool/client init here, e.g.:

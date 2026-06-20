@@ -58,3 +58,5 @@ jobs:
         run: uv run xenon --max-absolute C --max-modules C --max-average B src
       - name: Architecture boundaries (import-linter — ports/adapters discipline)
         run: uv run lint-imports
+      - name: Docstring coverage (interrogate — public API documented)
+        run: uv run interrogate src

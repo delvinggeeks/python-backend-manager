@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 
 
 class UserAdmin(ModelView, model=User):
+    """Admin view for users (the password hash is redacted)."""
+
     name = "User"
     name_plural = "Users"
     icon = "fa-solid fa-user"
@@ -50,6 +52,8 @@ class UserAdmin(ModelView, model=User):
 
 
 class OrganizationAdmin(ModelView, model=Organization):
+    """Admin view for organizations (the provider customer id is redacted)."""
+
     name = "Organization"
     name_plural = "Organizations"
     icon = "fa-solid fa-building"
@@ -64,6 +68,8 @@ class OrganizationAdmin(ModelView, model=Organization):
 
 
 class MembershipAdmin(ModelView, model=Membership):
+    """Admin view for organization memberships and roles."""
+
     name = "Membership"
     name_plural = "Memberships"
     icon = "fa-solid fa-user-group"
@@ -75,6 +81,8 @@ class MembershipAdmin(ModelView, model=Membership):
 
 
 class SubscriptionAdmin(ModelView, model=Subscription):
+    """Admin view for subscriptions (the provider subscription id is redacted)."""
+
     name = "Subscription"
     name_plural = "Subscriptions"
     icon = "fa-solid fa-credit-card"
@@ -97,6 +105,8 @@ class SubscriptionAdmin(ModelView, model=Subscription):
 
 
 class ApiKeyAdmin(ModelView, model=ApiKey):
+    """Admin view for API keys (the hashed secret is redacted; prefix is shown)."""
+
     name = "API key"
     name_plural = "API keys"
     icon = "fa-solid fa-key"
@@ -122,6 +132,8 @@ class ApiKeyAdmin(ModelView, model=ApiKey):
 
 
 class WebhookEndpointAdmin(ModelView, model=WebhookEndpoint):
+    """Admin view for webhook endpoints (the signing secret is redacted)."""
+
     name = "Webhook endpoint"
     name_plural = "Webhook endpoints"
     icon = "fa-solid fa-bolt"
@@ -136,6 +148,8 @@ class WebhookEndpointAdmin(ModelView, model=WebhookEndpoint):
 
 
 class AuditLogAdmin(ModelView, model=AuditLog):
+    """Read-only admin view for the append-only audit log."""
+
     name = "Audit log"
     name_plural = "Audit logs"
     icon = "fa-solid fa-clipboard-list"
