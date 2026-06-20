@@ -106,6 +106,7 @@ jobs:
           uv run mypy src
           uv run vulture src
           uv run xenon --max-absolute C --max-modules C --max-average B src
+          uv run lint-imports
           uv run pytest
 
   generate-capability:
@@ -204,6 +205,7 @@ jobs:
           uv run mypy src
           uv run vulture src
           uv run xenon --max-absolute C --max-modules C --max-average B src
+          uv run lint-imports
           uv run pytest
           # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
           # Only db-backed services render alembic.ini (and install alembic); a db-less capability
