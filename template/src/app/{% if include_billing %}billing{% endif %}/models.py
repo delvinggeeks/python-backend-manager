@@ -24,6 +24,8 @@ from app.db.models import Base
 
 
 class Subscription(Base):
+    """One subscription per org, synced from normalized provider webhook events."""
+
     __tablename__ = "subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
@@ -48,6 +50,8 @@ class Subscription(Base):
 
 
 class ProcessedEvent(Base):
+    """Webhook idempotency ledger keyed by (provider, event_id) — replays are no-ops."""
+
     __tablename__ = "processed_events"
 
     # Composite natural idempotency key: the SAME event id from two providers never collides,

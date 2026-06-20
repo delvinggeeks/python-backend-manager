@@ -9,10 +9,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base shared by all ORM models."""
 
 
 class Item(Base):
+    """Example table — replace with your own models."""
+
     __tablename__ = "items"
 
     id: Mapped[int] = mapped_column(primary_key=True)

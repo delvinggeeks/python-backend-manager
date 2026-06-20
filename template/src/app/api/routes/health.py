@@ -13,5 +13,6 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
+    """Liveness probe: report status, environment, and version."""
     settings = get_settings()
     return HealthResponse(environment=settings.environment, version=__version__)
