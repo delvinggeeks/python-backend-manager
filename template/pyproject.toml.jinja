@@ -83,6 +83,8 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
+    "pytest-randomly>=3.15",
+    "time-machine>=2.16",
     "anyio>=4.7",
     "ruff>=0.15",
     "mypy>=1.20",
@@ -142,7 +144,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q --cov=src/app --cov-report=term-missing"
+# pytest-randomly shuffles test order to surface order-dependence / shared-state leaks. The main
+# path pins the seed so CI is deterministic (a flaky gate would break auto-merge); run a periodic
+# `pytest -p randomly --randomly-seed=last` (or a fresh seed) to sweep other orders for latent flakes.
+addopts = "-q --cov=src/app --cov-report=term-missing --randomly-seed=1729"
 
 [tool.interrogate]
 # Docstring-coverage gate (public API stays documented). Run as `uv run interrogate src`.
