@@ -14,6 +14,11 @@ run:
 test:
     uv run pytest
 
+# OpenAPI fuzzing (Schemathesis): boot the app and assert no endpoint 5xxes under
+# schema-aware property-based fuzzing. Needs the app's extras synced (`just setup`).
+fuzz:
+    bash scripts/run_fuzz.sh
+
 lint:
     uv run ruff check .
 

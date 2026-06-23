@@ -44,7 +44,7 @@ def _to_read(entry: AuditLog) -> AuditLogRead:
 async def list_audit_logs(
     org_id: uuid.UUID,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
 {% if include_rbac %}
     membership: Membership = Depends(require_role(ADMIN)),
 {% else %}
@@ -91,7 +91,7 @@ def _to_read(entry: AuditLog) -> AuditLogRead:
 @router.get("/audit", response_model=AuditLogPage)
 async def list_audit_logs(
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
 {% if include_users or include_admin %}
     user: User = Depends(current_active_user),
 {% endif %}
