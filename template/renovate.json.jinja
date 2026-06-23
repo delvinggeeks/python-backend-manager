@@ -1,6 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard", "schedule:weekly"],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "schedule:weekly",
+    "helpers:pinGitHubActionDigests"
+  ],
   "timezone": "Asia/Kolkata",
   "labels": ["dependencies"],
   "lockFileMaintenance": { "enabled": true, "schedule": ["before 9am on monday"] },
