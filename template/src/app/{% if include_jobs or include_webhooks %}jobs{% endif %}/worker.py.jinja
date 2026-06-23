@@ -15,7 +15,7 @@ from arq.connections import RedisSettings
 
 from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import redis_settings as build_redis_settings
-from app.jobs.tasks import {% if include_webhooks %}deliver_webhook, {% endif %}example_task{% if include_webhooks %}, relay_outbox{% endif %}{% if include_email %}, send_email_task{% endif +%}
+from app.jobs.tasks import {% if include_webhooks %}deliver_webhook, {% endif %}example_task{% if include_idempotency %}, purge_idempotency_keys{% endif %}{% if include_webhooks %}, relay_outbox{% endif %}{% if include_email %}, send_email_task{% endif +%}
 
 log = get_logger(__name__)
 
@@ -44,6 +44,9 @@ class WorkerSettings:
 {% if include_email %}
         send_email_task,
 {% endif %}
+{% if include_idempotency %}
+        purge_idempotency_keys,
+{% endif %}
 {% if include_webhooks %}
         deliver_webhook,
         relay_outbox,
@@ -55,6 +58,16 @@ class WorkerSettings:
     cron_jobs: ClassVar[list[Any]] = [
         cron(heartbeat, minute=set(range(0, 60, 5))),
         cron(relay_outbox, second=set(range(0, 60, 10))),
+{% if include_idempotency %}
+        cron(purge_idempotency_keys, hour={3}, minute={0}),
+{% endif %}
+    ]
+{% elif include_idempotency %}
+    # Recurring schedule (arq cron). The example heartbeat runs every 5 minutes; expired
+    # idempotency keys are purged nightly.
+    cron_jobs: ClassVar[list[Any]] = [
+        cron(heartbeat, minute=set(range(0, 60, 5))),
+        cron(purge_idempotency_keys, hour={3}, minute={0}),
     ]
 {% else %}
     # Recurring schedule (arq cron) — this example runs every 5 minutes.

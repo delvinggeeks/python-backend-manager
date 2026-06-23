@@ -19,6 +19,20 @@ async def example_task(ctx: dict[str, Any], value: int) -> int:
     """A trivial example task: double a number. Replace with real background work."""
     log.info("jobs.example_task", value=value)
     return value * 2
+{% if include_idempotency %}
+
+
+async def purge_idempotency_keys(ctx: dict[str, Any]) -> int:
+    """Delete expired idempotency keys (storage reclaim). Returns how many were removed.
+
+    The middleware already treats an expired key as absent, so correctness never depends on this —
+    it just reclaims storage. Scheduled on the worker cron; a worker-less service can call
+    ``SqlIdempotencyStore().purge_expired()`` from its own scheduler instead.
+    """
+    from app.idempotency.store import SqlIdempotencyStore
+
+    return await SqlIdempotencyStore().purge_expired()
+{% endif %}
 {% if include_email %}
 
 

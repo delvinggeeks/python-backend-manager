@@ -1,0 +1,270 @@
+"""Idempotency-key tests — the middleware + store, with NO live infrastructure.
+
+A tiny ASGI app (a counter endpoint) is wrapped with IdempotencyMiddleware and driven over httpx's
+ASGITransport against the throwaway SQLite database from `conftest.pytest_configure`. Proves the
+contract: a repeated Idempotency-Key replays the cached response (status + headers + body) without
+re-running the handler (one effect); a different body under the same key is rejected (422); two
+callers with different credentials don't collide; an unfinished claim is a 409; a 5xx or oversize
+body releases/skips the claim; set-cookie is never cached; concurrent claims keep one owner; and
+expired keys are reclaimed / purged. Requires the `db` extra.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+from app.idempotency import IdempotencyMiddleware, SqlIdempotencyStore
+from app.idempotency.models import IdempotencyKey
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+def _build_app(counter: dict[str, int], *, max_body_bytes: int = 1_048_576) -> FastAPI:
+    """A minimal app whose endpoints bump a counter, wrapped with the idempotency middleware."""
+    app = FastAPI()
+
+    @app.post("/do")
+    async def do() -> dict[str, int]:
+        counter["n"] += 1
+        return {"count": counter["n"]}
+
+    @app.post("/created")
+    async def created() -> Response:
+        counter["n"] += 1
+        return JSONResponse(
+            {"id": counter["n"]}, status_code=201, headers={"Location": f"/things/{counter['n']}"}
+        )
+
+    @app.post("/fail")
+    async def fail() -> Response:
+        counter["n"] += 1
+        return Response(status_code=503)
+
+    @app.get("/peek")
+    async def peek() -> dict[str, int]:
+        return {"count": counter["n"]}
+
+    app.add_middleware(
+        IdempotencyMiddleware,
+        store=SqlIdempotencyStore(),
+        ttl_seconds=3600,
+        max_body_bytes=max_body_bytes,
+    )
+    return app
+
+
+def _client(app: FastAPI) -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def _expire(key: str) -> None:
+    async with SessionFactory() as session:
+        record = (
+            await session.execute(select(IdempotencyKey).where(IdempotencyKey.key == key))
+        ).scalar_one()
+        record.expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+        await session.commit()
+
+
+async def test_duplicate_key_replays_response_without_re_running() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        first = await client.post("/do", headers={"Idempotency-Key": "abc"})
+        assert first.status_code == 200
+        assert first.json() == {"count": 1}
+
+        second = await client.post("/do", headers={"Idempotency-Key": "abc"})
+        assert second.status_code == 200
+        assert second.json() == {"count": 1}  # the handler did NOT run again
+        assert second.headers.get("idempotent-replayed") == "true"
+    assert counter["n"] == 1  # exactly one effect
+
+
+async def test_replay_preserves_status_and_location_header() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        first = await client.post("/created", headers={"Idempotency-Key": "k"})
+        assert first.status_code == 201
+        assert first.headers["location"] == "/things/1"
+        second = await client.post("/created", headers={"Idempotency-Key": "k"})
+        assert second.status_code == 201
+        assert second.headers["location"] == "/things/1"  # full header replayed verbatim
+        assert second.headers["idempotent-replayed"] == "true"
+    assert counter["n"] == 1
+
+
+async def test_same_key_different_credential_does_not_collide() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        first = await client.post(
+            "/do", headers={"Idempotency-Key": "k", "Authorization": "Bearer a"}
+        )
+        second = await client.post(
+            "/do", headers={"Idempotency-Key": "k", "Authorization": "Bearer b"}
+        )
+        # different credentials → different scopes → both run (no cross-principal replay/collision)
+        assert first.json() == {"count": 1}
+        assert second.json() == {"count": 2}
+        assert "idempotent-replayed" not in second.headers
+    assert counter["n"] == 2
+
+
+async def test_different_key_runs_again() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        await client.post("/do", headers={"Idempotency-Key": "k1"})
+        again = await client.post("/do", headers={"Idempotency-Key": "k2"})
+        assert again.json() == {"count": 2}
+    assert counter["n"] == 2
+
+
+async def test_no_header_is_passthrough() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        await client.post("/do")
+        await client.post("/do")
+    assert counter["n"] == 2  # no dedup without the header
+
+
+async def test_get_is_never_deduped() -> None:
+    counter = {"n": 5}
+    async with _client(_build_app(counter)) as client:
+        first = await client.get("/peek", headers={"Idempotency-Key": "k"})
+        second = await client.get("/peek", headers={"Idempotency-Key": "k"})
+        assert first.status_code == second.status_code == 200
+        assert "idempotent-replayed" not in second.headers
+
+
+async def test_same_key_different_body_is_rejected() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        first = await client.post("/do", headers={"Idempotency-Key": "k"}, json={"a": 1})
+        assert first.status_code == 200
+        clash = await client.post("/do", headers={"Idempotency-Key": "k"}, json={"a": 2})
+        assert clash.status_code == 422
+    assert counter["n"] == 1  # the mismatched retry never ran the handler
+
+
+async def test_5xx_releases_the_claim_so_a_retry_re_runs() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter)) as client:
+        first = await client.post("/fail", headers={"Idempotency-Key": "k"})
+        assert first.status_code == 503
+        retry = await client.post("/fail", headers={"Idempotency-Key": "k"})
+        assert retry.status_code == 503
+        assert "idempotent-replayed" not in retry.headers  # not a replay — it re-ran
+    assert counter["n"] == 2  # a 5xx is not a final, cacheable answer
+
+
+async def test_oversize_body_is_passed_through_undeduped() -> None:
+    counter = {"n": 0}
+    async with _client(_build_app(counter, max_body_bytes=10)) as client:
+        big = {"data": "x" * 100}
+        first = await client.post("/do", headers={"Idempotency-Key": "k"}, json=big)
+        second = await client.post("/do", headers={"Idempotency-Key": "k"}, json=big)
+        # body exceeds the cap → never buffered/deduped → the handler runs both times
+        assert first.json() == {"count": 1}
+        assert second.json() == {"count": 2}
+    assert counter["n"] == 2
+
+
+async def test_unfinished_claim_reports_in_progress() -> None:
+    store = SqlIdempotencyStore()
+    first = await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    assert first.outcome == "owned"
+    # A second claim before complete() means a concurrent request holds the key.
+    second = await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    assert second.outcome == "in_progress"
+
+
+async def test_concurrent_claims_keep_a_single_owner() -> None:
+    store = SqlIdempotencyStore()
+    results = await asyncio.gather(
+        store.claim("k", scope="s", request_hash="h", ttl_seconds=3600),
+        store.claim("k", scope="s", request_hash="h", ttl_seconds=3600),
+        return_exceptions=True,
+    )
+    # Safety invariant (timing-independent): the UNIQUE (scope, key) guarantees no double-own and no
+    # duplicate row, however the two race — the loser gets in_progress, or on SQLite a write-lock
+    # exception; either way it never also owns the key.
+    owned = [r for r in results if getattr(r, "outcome", None) == "owned"]
+    assert len(owned) <= 1
+    async with SessionFactory() as session:
+        rows = (
+            (await session.execute(select(IdempotencyKey).where(IdempotencyKey.key == "k")))
+            .scalars()
+            .all()
+        )
+    assert len(rows) <= 1
+
+
+async def test_completed_claim_replays_cached_response() -> None:
+    store = SqlIdempotencyStore()
+    await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    await store.complete(
+        "k",
+        scope="s",
+        status=201,
+        headers=[(b"content-type", b"application/json"), (b"location", b"/x/1")],
+        body=b'{"ok":true}',
+    )
+    result = await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    assert result.outcome == "replay"
+    assert result.cached is not None
+    assert result.cached.status == 201
+    assert result.cached.body == b'{"ok":true}'
+    assert (b"location", b"/x/1") in result.cached.headers
+
+
+async def test_set_cookie_is_never_cached() -> None:
+    store = SqlIdempotencyStore()
+    await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    await store.complete(
+        "k",
+        scope="s",
+        status=200,
+        headers=[(b"set-cookie", b"session=secret"), (b"content-type", b"text/plain")],
+        body=b"ok",
+    )
+    result = await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    assert result.cached is not None
+    names = [name for name, _ in result.cached.headers]
+    assert b"set-cookie" not in names  # no session tokens at rest
+    assert b"content-type" in names
+
+
+async def test_expired_key_is_reclaimed() -> None:
+    store = SqlIdempotencyStore()
+    await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    await store.complete("k", scope="s", status=200, headers=[], body=b"x")
+    await _expire("k")
+    # Past its TTL the key is absent — a new claim (even a different request) owns it afresh.
+    result = await store.claim("k", scope="s", request_hash="h2", ttl_seconds=3600)
+    assert result.outcome == "owned"
+
+
+async def test_purge_expired_removes_old_rows() -> None:
+    store = SqlIdempotencyStore()
+    await store.claim("k", scope="s", request_hash="h", ttl_seconds=3600)
+    await _expire("k")
+    assert await store.purge_expired() == 1
+    async with SessionFactory() as session:
+        remaining = (await session.execute(select(IdempotencyKey))).scalars().all()
+    assert remaining == []

@@ -1,0 +1,50 @@
+"""idempotency keys
+
+Revision ID: 0010_idempotency
+Revises: {% if include_webhooks %}0009_outbox{% elif include_rls %}0008_rls{% elif include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_admin %}0007_auth_sessions{% elif include_audit %}0005_audit{% else %}(root){% endif %}
+
+Create Date: ships with the template (include_idempotency)
+
+``idempotency_keys`` backs the Idempotency-Key middleware: one row per credential-scoped key,
+UNIQUE on ``(scope, key)`` so the INSERT is the atomic claim. Independent of users/tenancy (a bare
+``db`` service can have it), so it chains onto whatever the newest migration is — or starts the
+chain when the service has none.
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0010_idempotency"
+down_revision: str | Sequence[str] | None = {% if include_webhooks %}"0009_outbox"{% elif include_rls %}"0008_rls"{% elif include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_admin %}"0007_auth_sessions"{% elif include_audit %}"0005_audit"{% else %}None{% endif %}
+
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "idempotency_keys",
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("scope", sa.String(length=64), nullable=False),
+        sa.Column("key", sa.String(length=255), nullable=False),
+        sa.Column("request_hash", sa.String(length=64), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("response_status", sa.Integer(), nullable=True),
+        sa.Column("response_headers", sa.JSON(), nullable=True),
+        sa.Column("response_body", sa.LargeBinary(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.DateTime(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("scope", "key", name="uq_idempotency_keys_scope_key"),
+    )
+    op.create_index(
+        op.f("ix_idempotency_keys_expires_at"), "idempotency_keys", ["expires_at"], unique=False
+    )
+
+
+def downgrade() -> None:
+    op.drop_index(op.f("ix_idempotency_keys_expires_at"), table_name="idempotency_keys")
+    op.drop_table("idempotency_keys")

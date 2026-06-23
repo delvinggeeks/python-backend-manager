@@ -151,6 +151,10 @@ jobs:
           # tenancy) so the flat /audit router, the None-rooted 0005 migration, and the DB-level
           # record() helper are all exercised — the alembic round-trip below covers 0005.
           - { capability: audit,    data: "--data include_audit=true", extras: "--extra db" }
+          # Idempotency is db-backed and users-independent (on by default for any db service). This
+          # ALONE row (bare db, no users/tenancy) exercises the IdempotencyMiddleware + store and the
+          # None-rooted 0010 migration; the alembic round-trip below covers 0010 as the chain root.
+          - { capability: idempotency, data: "--data include_db=true --data include_idempotency=true", extras: "--extra db" }
           # Webhooks implies jobs (worker) + tenancy (its users + db). This row exercises the
           # /orgs/{org_id}/webhooks CRUD, the best-effort dispatch enqueue (fake pool — no Redis),
           # and the signed deliver_webhook task. No audit here, so delivery records nothing.

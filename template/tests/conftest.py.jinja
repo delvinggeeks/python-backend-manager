@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin or include_idempotency %}
 import os
 import tempfile
 
@@ -10,7 +10,7 @@ import tempfile
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin or include_idempotency %}
 
 def pytest_configure() -> None:
     # Users tests need a database; default to a throwaway SQLite file so the suite
@@ -26,7 +26,7 @@ from app.main import create_app
 
 @pytest.fixture
 async def client():
-{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_audit or include_webhooks or include_admin or include_idempotency %}
     # Imported lazily so DATABASE_URL (set in pytest_configure) is in place first.
     from app.main import create_app
 
