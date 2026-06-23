@@ -133,6 +133,10 @@ ignore = ["B008"]
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately hold asserts and hardcoded dummy secrets/passwords.
 "tests/*" = ["S101", "S105", "S106", "S107"]
+{% if include_rls %}
+# The RLS migration builds DDL from hardcoded table-name literals (never user input).
+"migrations/versions/*" = ["S608"]
+{% endif %}
 
 [tool.ruff.format]
 docstring-code-format = true

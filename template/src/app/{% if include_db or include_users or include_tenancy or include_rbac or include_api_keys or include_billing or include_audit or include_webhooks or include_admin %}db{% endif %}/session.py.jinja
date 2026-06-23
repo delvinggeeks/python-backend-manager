@@ -1,0 +1,82 @@
+"""Async SQLAlchemy 2.0 session factory. Requires the `db` extra.
+
+Import errors here are intentional if `db` is not installed — only import this
+module from code paths that need the database.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+
+{% if include_rls %}
+from sqlalchemy import text
+{% endif %}
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.core.config import get_settings
+{% if include_rls %}
+from app.tenancy.rls import current_tenant_id
+{% endif %}
+
+_settings = get_settings()
+if not _settings.database_url:
+    raise RuntimeError("DATABASE_URL is required to use app.db.session")
+
+{% if include_rls %}
+# Primary connection. With RLS on, the per-tenant request path uses this via `get_session`, which
+# sets the `app.current_tenant` GUC so Row-Level Security scopes every query to the caller's org.
+{% endif %}
+engine = create_async_engine(_settings.database_url, pool_pre_ping=True)
+SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+{% if include_rls %}
+
+# Trusted connection for cross-tenant flows that legitimately have no single tenant context —
+# API-key authentication, the admin panel, inbound provider webhooks, and background workers. It
+# connects as a role that BYPASSES RLS (set DATABASE_URL_PRIVILEGED to a BYPASSRLS / owner role in
+# production; in dev it falls back to the primary connection). The two-role split is what keeps the
+# RLS path a true backstop — the RLS role *cannot* read across tenants even if a query forgets its
+# WHERE clause, while these trusted flows are never silently blocked. See app/tenancy/rls.py.
+privileged_engine = create_async_engine(
+    _settings.database_url_privileged or _settings.database_url, pool_pre_ping=True
+)
+PrivilegedSessionFactory = async_sessionmaker(privileged_engine, expire_on_commit=False)
+
+
+async def _set_tenant_guc(session: AsyncSession) -> None:
+    """Set the per-session RLS tenant GUC from the request context (Postgres-only; no-op on SQLite).
+
+    Called at the start of every `get_session`, before any query runs — so a value left on a
+    pooled connection by a prior request is always overwritten first, and a request with no org
+    path gets the empty string (the policies then match no rows: a safe default).
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    tenant = current_tenant_id.get() or ""
+    await session.execute(
+        text("SELECT set_config('app.current_tenant', :tenant, false)"), {"tenant": tenant}
+    )
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Per-tenant (RLS-scoped) DB session. Sets `app.current_tenant` before yielding."""
+    async with SessionFactory() as session:
+        await _set_tenant_guc(session)
+        yield session
+
+
+async def get_privileged_session() -> AsyncIterator[AsyncSession]:
+    """Trusted session that BYPASSES RLS — for cross-tenant auth/admin/webhook/worker flows."""
+    async with PrivilegedSessionFactory() as session:
+        yield session
+{% else %}
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency: `session: AsyncSession = Depends(get_session)`."""
+    async with SessionFactory() as session:
+        yield session
+{% endif %}

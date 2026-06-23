@@ -47,7 +47,7 @@ from app.billing.schemas import (
     SubscriptionRead,
 )
 from app.core.config import get_settings
-from app.db.session import get_session
+from app.db.session import {% if include_rls %}get_privileged_session, {% endif %}get_session
 from app.tenancy.dependencies import get_current_membership
 from app.tenancy.models import Membership, Organization
 
@@ -198,7 +198,11 @@ async def _sync_subscription(provider: str, event: PaymentEvent, session: AsyncS
 @webhook_router.post("/webhook")
 async def payments_webhook(
     request: Request,
-    session: AsyncSession = Depends(get_session),
+{% if include_rls %}
+    # Inbound provider webhook — no org context (the row is found by the provider's id), so it
+    # must BYPASS RLS. The org-scoped routes above keep the per-tenant (RLS) session.
+{% endif %}
+    session: AsyncSession = Depends({% if include_rls %}get_privileged_session{% else %}get_session{% endif %}),
     payments: PaymentsPort = Depends(get_payments_provider),
 ) -> dict[str, str]:
     """Receive provider events: verify the signature, dedupe by (provider, id), then sync."""

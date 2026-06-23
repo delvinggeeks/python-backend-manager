@@ -68,7 +68,11 @@ async def deliver_webhook(
 {% if include_audit %}
     from app.audit import record
 {% endif %}
+{% if include_rls %}
+    from app.db.session import PrivilegedSessionFactory as SessionFactory  # worker bypasses RLS
+{% else %}
     from app.db.session import SessionFactory
+{% endif %}
     from app.webhooks.egress import WebhookEgressError, resolve_pinned_target
     from app.webhooks.models import WebhookEndpoint
     from app.webhooks.security import SIGNATURE_HEADER, sign_payload
