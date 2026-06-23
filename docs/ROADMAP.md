@@ -519,6 +519,49 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 
 ---
 
+## Wave 9 — monetization intelligence (revenue model + AI pricing) — see [MONETIZATION.md](MONETIZATION.md)
+
+### P39 · Revenue-model & packaging engine  🟠 ⭐
+- **Scope:** packaging as **versioned DATA, not code** behind a **`PricingPort` + `PackagingPort`** — a
+  Postgres `PricingCatalog` (products·plans·features·prices·streams) that resolves the effective
+  **entitlement + price** for a `(tenant, plan, usage)` tuple and composes every active **revenue stream**
+  (subscription · per-seat · usage/overage · prepaid credits/burn-down · one-time/add-on · API-product ·
+  marketplace rev-share) into one P7 invoice. Effective-dated prices, plan up/downgrade **proration**,
+  published catalog **versions** (audited + reversible). Managed adapters (Stripe Billing/Lago/Metronome/Orb)
+  behind the same port. Extends `billing`/P7.
+- **Toggle/Port:** `include_pricing` (implies billing + metering); `PricingPort`, `PackagingPort`,
+  `pricing_provider`.
+- **Implies/Deps:** **P7 metering** (rate→invoice), **P8 entitlements/quotas**, billing.
+- **DoD:** a plan/price/packaging change is **data-only** (no deploy); `resolve(...)` deterministic + pure;
+  proration correct; ≥2 streams compose into one P7 invoice; every catalog change versioned, audited (P10),
+  reversible. Works on sqlite/no-infra with the default adapter.
+- **CI:** `pricing` (ALONE: pricing+metering+billing) + `pricing_full` (+API-product +add-ons +proration);
+  alembic round-trip.
+
+### P40 · AI pricing intelligence (revenue optimization)  🟠 ⭐
+- **Scope:** a **`PricingIntelligencePort`** that reads metering (P7) + analytics (P34: MRR/ARR/churn/
+  expansion/cohorts) + the catalog (P39) and emits **pricing/packaging recommendations** — plan
+  recommendation/right-sizing, expansion/upsell timing, dynamic/personalized pricing (guardrailed),
+  churn-risk discounting, price-elasticity + usage-forecast, packaging **simulation**, and **price
+  experimentation** (A/B via P18, measured by P34). The decision model is a **pluggable adapter**: default
+  **`rules+forecast`** (deterministic, no LLM); **`llm`** adapter over the **P21 gateway** (token-metered,
+  structured-output) that degrades to rules when unconfigured. **Human-in-the-loop approval** applies via
+  P39; revenue **guardrails** (floors/ceilings/max-discount/fairness, ties P26) enforced before surfacing.
+- **Toggle/Port:** `include_pricing_ai` (implies pricing P39 + analytics P34); `PricingIntelligencePort`,
+  `pricing_ai_provider` (default `rules`; `llm` via P21).
+- **Implies/Deps:** **P39**, **P7**, **P34**, **P18** (experiments), **P21** (AI adapter, optional), **P26**
+  (price-fairness guardrails), **P10** (audit).
+- **DoD:** a recommendation carries rationale + confidence + guardrail-checked bounds; **nothing
+  auto-applies** (human gate); an A/B price experiment launches (P18) + lift measured (P34); the `llm`
+  adapter degrades to `rules`; every applied change audited + reversible; guardrail violations rejected.
+  Fake-LLM on sqlite/no-infra.
+- **CI:** `pricing_ai` row (ALONE: pricing_ai+pricing+analytics, fake LLM) — recommend→approve→apply→audit +
+  a guardrail-rejection + an llm→rules degradation test.
+- **Human gate (D20 ⚠️):** enabling **dynamic/personalized pricing** is a legal/fairness/regional call —
+  default **off** (rules baseline + human approval only) until the founder explicitly enables it.
+
+---
+
 ## Deliberately deferred (seams exist; do NOT build until a real trigger)
 
 Listed so "not building these" is a *recorded decision*, not an omission ([PRINCIPLES.md#P9](PRINCIPLES.md)):
@@ -580,6 +623,7 @@ Wave 7:       P31 Custom domains+auto-TLS (needs tenancy+P4) ─► P32 Backend 
 Wave 8:       P33 Tax+invoicing ⚖ (needs billing; ⚠ D18 India e-invoicing) · P34 Analytics+reporting
               P35 Public-API/dev-platform (OAuth provider; needs users) · P36 i18n/l10n/currency/tz
               P37 Media processing (malware scan; needs storage) · P38 Tenant lifecycle (needs tenancy+billing+P16)
+Wave 9:       P39 Revenue-model+packaging ⭐ (needs P7+P8) ─► P40 AI pricing intelligence ⭐ (needs P39+P34+P21; ⚠ D20)
 ```
 
 Waves 0-1 are parallel-safe; Wave 2 gates Wave 3; Wave 4 is value-ordered and largely independent

@@ -402,3 +402,29 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
   boundaries, docstrings) at zero cost; SonarQube only adds PR-decoration/taint at enterprise scale.
   `import-linter` is the standout — it makes the architecture itself a CI gate.
 - **Swap path:** add SonarQube/Codecov as CI steps at ≥50 devs / regulated audit — the native gates stay.
+
+## ADR-37 — Revenue-model & packaging engine (P39)
+- **Default:** **Postgres-native pricing catalog** (products·plans·features·prices·streams as **versioned
+  data**) behind a **`PricingPort` + `PackagingPort`** — deterministic `resolve(tenant, plan, usage)`,
+  proration, multi-stream composition into the P7 invoice. Full spec: [MONETIZATION.md](MONETIZATION.md).
+- **Alternatives:** **Stripe Billing** (pricing in Stripe; 0.5-0.8% billing fee + lock-in), **Lago**
+  (self-host, MIT — full billing engine), **Metronome / Orb** (usage-billing platforms, managed, rev-share).
+- **Cost:** Postgres-native ≈ ₹0 + full control + auditable history; managed engines are 0.5-2% of revenue.
+- **Why:** pricing is core IP and must change **without a deploy**, be **auditable/reversible**, and compose
+  several streams the app already meters (P7); the port keeps the managed swap a config change at volume.
+- **Swap path:** `pricing_provider` → Stripe Billing / Lago when packaging complexity or finance-team
+  tooling justifies the rev-share; the `PricingPort` contract (resolve/proration) is unchanged.
+
+## ADR-38 — AI pricing intelligence (P40)
+- **Default:** a **`rules+forecast` baseline** (deterministic — usage-percentile plan-fit + EWMA/Holt
+  forecast + upsell/churn heuristics) behind a **`PricingIntelligencePort`**; recommendations are
+  **human-approved** and guardrailed (floors/ceilings/fairness, ties P26). Full spec: [MONETIZATION.md](MONETIZATION.md).
+- **Alternatives:** an **`llm` adapter** over the P21 gateway (token-metered, structured-output via
+  `instructor`) that proposes changes with rationale + confidence; an **offline elasticity model** (notebook/
+  DW seam) for price-elasticity; managed pricing-optimization SaaS (e.g. usage-analytics vendors).
+- **Cost:** rules baseline ≈ ₹0; the `llm` adapter costs metered tokens (its own AI cost flows through P7).
+- **Why:** ship revenue-optimization value with **zero AI cost** and **no auto-apply** (legal/fairness risk);
+  the decision *model* is a port, so a trained elasticity model or an LLM agent drops in without touching
+  callers; dynamic/personalized pricing stays **off** until the founder enables it (D20).
+- **Swap path:** `pricing_ai_provider` `rules` → `llm` (or a future ML model) — same recommend/simulate/
+  evaluate contract; degrades to `rules` when the LLM is unconfigured.
