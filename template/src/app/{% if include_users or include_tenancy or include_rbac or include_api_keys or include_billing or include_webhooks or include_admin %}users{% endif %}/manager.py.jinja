@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from typing import cast
 
-from fastapi import Depends{% if include_email %}, Request{% endif +%}
+from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, UUIDIDMixin
 from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.core.config import get_settings
 from app.users.db import get_user_db
 from app.users.models import User
+from app.users.sessions import revoke_all_for_user
 
 _settings = get_settings()
 
@@ -22,6 +24,14 @@ _settings = get_settings()
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = _settings.users_jwt_secret
     verification_token_secret = _settings.users_jwt_secret
+
+    async def on_after_reset_password(self, user: User, _request: Request | None = None) -> None:
+        """After a password reset, end every existing session: bump token_version (rejects all
+        access tokens) and revoke all refresh families (so a stolen refresh can't mint new ones)."""
+        session = cast("SQLAlchemyUserDatabase[User, uuid.UUID]", self.user_db).session
+        user.token_version += 1  # `user` is attached to this session → persists on commit
+        await revoke_all_for_user(session, user.id)
+        await session.commit()
 {% if include_email %}
 
     async def on_after_register(self, user: User, _request: Request | None = None) -> None:

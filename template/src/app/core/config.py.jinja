@@ -59,7 +59,10 @@ class Settings(BaseSettings):
     # --- Users / auth (only used if the `users` extra is installed) ---
     #     Override USERS_JWT_SECRET in every non-local environment (>=32 bytes).
     users_jwt_secret: str = "CHANGE_ME_dev_only_secret_override_in_prod"  # noqa: S105
-    users_jwt_lifetime_seconds: int = 3600
+    # Short-lived access token; clients exchange the rotating refresh token below for a new one.
+    users_jwt_lifetime_seconds: int = 900
+    # Rotating refresh-token lifetime (30 days); each /auth/jwt/refresh rotates and re-issues it.
+    users_refresh_lifetime_seconds: int = 2592000
 {% endif %}
 {% if include_billing %}
 
