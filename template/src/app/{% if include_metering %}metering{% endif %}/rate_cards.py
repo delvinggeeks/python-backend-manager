@@ -3,7 +3,7 @@
 A **rate card** is a plan's base price plus, per metered dimension, an **included quota** and a
 **per-unit overage** price. The rating engine (:mod:`app.metering.rating`) maps a `(plan, usage)`
 pair onto invoice lines using these. Plan keys mirror ``app.billing.entitlements`` (free / pro /
-enterprise) when billing is present; a metering-only service rates every org against ``DEFAULT_PLAN``.
+enterprise) when billing is present; a metering-only service uses the default card for every org.
 Replace these with your real prices — they are intentionally plain data so they unit-test trivially.
 """
 

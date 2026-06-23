@@ -1,9 +1,9 @@
-"""The metering + billing seams — ``MeteringPort`` (usage) and ``BillingPort`` (rate→invoice→charge).
+"""The metering + billing seams: ``MeteringPort`` (usage) and ``BillingPort`` (rate/invoice/charge).
 
-Hexagonal ports the router depends on, never a concrete store. The default Postgres-native adapter is
-:mod:`app.metering.service`; a managed swap (Lago / OpenMeter / Stripe Meters) implements the same
-contract behind the same ``include_metering`` toggle. The session is part of the Postgres-native
-contract so ingest can join the request transaction (idempotent + atomic). Requires the `db` extra.
+Hexagonal ports the router depends on, never a concrete store. The default Postgres-native adapter
+is :mod:`app.metering.service`; a managed swap (Lago / OpenMeter / Stripe Meters) implements the
+same contract behind ``include_metering``. The session is part of the Postgres-native contract so
+ingest can join the request transaction (idempotent + atomic). Requires the `db` extra.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class MeteringPort(Protocol):
         *,
         idempotency_key: str,
     ) -> bool:
-        """Record ``quantity`` of ``meter`` for the org. Returns ``False`` if the key was a duplicate."""
+        """Record ``quantity`` of ``meter`` for the org. ``False`` if the key was a duplicate."""
         ...
 
     async def usage_for_period(
@@ -57,7 +57,7 @@ class BillingPort(Protocol):
         start: datetime,
         end: datetime,
     ) -> Invoice:
-        """Rate the org's usage over ``[start, end)`` against ``plan`` → a persisted ``open`` invoice."""
+        """Rate the org's usage over ``[start, end)`` against ``plan`` → a persisted invoice."""
         ...
 
     async def charge_invoice(self, session: AsyncSession, invoice: Invoice) -> Invoice:

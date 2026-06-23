@@ -1,7 +1,7 @@
 """Metering & billing tables: usage events, invoices, and a prepaid wallet. Requires `db` + `users`.
 
-``UsageEvent`` is the append-only meter ledger — idempotent per ``(organization_id, idempotency_key)``
-so a retried ingest counts once. ``Invoice`` is a rated period (line items as JSON, from the rating
+``UsageEvent`` is the append-only meter ledger — idempotent per ``(organization_id, key)`` so a
+retried ingest counts once. ``Invoice`` is a rated period (line items as JSON, from the rating
 engine). ``CustomerWallet`` + ``WalletTransaction`` are the prepaid credit balance and its atomic
 debit/top-up ledger. All org-scoped (FK ``organizations.id``) and mapped onto the shared ``Base``.
 """
@@ -62,6 +62,11 @@ class Invoice(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     charged_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 
+    # One invoice per (org, period): a concurrent / retried close converges, never double-bills.
+    __table_args__ = (
+        UniqueConstraint("organization_id", "period_start", name="uq_invoice_org_period"),
+    )
+
 
 class CustomerWallet(Base):
     """An org's prepaid credit balance (minor units). One per org; debited atomically on charge."""
@@ -88,7 +93,7 @@ class WalletTransaction(Base):
     wallet_id: Mapped[uuid.UUID] = mapped_column(
         GUID, ForeignKey("customer_wallets.id", ondelete="CASCADE"), index=True
     )
-    delta_cents: Mapped[int] = mapped_column(BigInteger)  # + top-up, − debit
+    delta_cents: Mapped[int] = mapped_column(BigInteger)  # positive top-up, negative debit
     reason: Mapped[str] = mapped_column(String(64))
     # UNIQUE (index) so a retried top-up / debit applies once (idempotent wallet mutation).
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)

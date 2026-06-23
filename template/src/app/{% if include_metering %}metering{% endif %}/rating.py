@@ -1,9 +1,9 @@
 """The rating engine: a period's `(plan, usage)` → invoice lines (base + included quota + overage).
 
 Pure and dependency-free — the heart of metering, trivial to unit-test. ``rate`` resolves the plan's
-:class:`~app.metering.rate_cards.RateCard`, emits one ``base`` line for the flat fee (if any), then one
-``overage`` line per meter whose usage exceeded its included quota (priced per unit). Unknown plans
-fall back to ``DEFAULT_PLAN``. The store (:mod:`app.metering.service`) persists these onto an Invoice.
+:class:`~app.metering.rate_cards.RateCard`, emits a ``base`` line for the flat fee (if any), then a
+per-meter ``overage`` line where usage exceeded the included quota. Unknown plans fall back to the
+default. The store (:mod:`app.metering.service`) persists these onto an Invoice.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ def rate(
 ) -> list[RatedLine]:
     """Rate ``usage`` (per-meter totals) against ``plan``'s rate card → ordered invoice lines.
 
-    The ``base`` line comes first (omitted when the plan is free), then one ``overage`` line per meter
-    that exceeded its included quota AND has a non-zero overage price (a zero price = a hard cap, not
+    The ``base`` line comes first (free plans omit it), then an ``overage`` line per meter that
+    exceeded its included quota AND has a non-zero overage price (a zero price is a hard cap, not
     billed). Deterministic: meters are emitted in sorted order.
     """
     cards = rate_cards if rate_cards is not None else DEFAULT_RATE_CARDS
@@ -66,7 +66,7 @@ def rate(
                     quantity=over,
                     unit_cents=meter_rate.overage_cents,
                     amount_cents=amount,
-                    description=f"{meter} overage: {over} × {meter_rate.overage_cents}c",
+                    description=f"{meter} overage: {over} x {meter_rate.overage_cents}c",
                 )
             )
     return lines

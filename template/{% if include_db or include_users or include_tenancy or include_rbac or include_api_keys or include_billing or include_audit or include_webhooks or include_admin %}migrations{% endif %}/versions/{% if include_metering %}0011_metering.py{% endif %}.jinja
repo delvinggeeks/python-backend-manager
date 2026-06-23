@@ -5,8 +5,12 @@ Revises: {% if include_idempotency %}0010_idempotency{% elif include_webhooks %}
 
 Create Date: ships with the template (include_metering)
 
-Usage→rating→invoice + prepaid-wallet tables. Metering implies tenancy (org-scoped), so this always
-chains onto the auth-sessions migration (or the latest of rls / outbox / idempotency when those are on).
+Usage→rating→invoice + prepaid-wallet tables. Metering implies tenancy (org-scoped), so this chains
+onto the auth-sessions migration (or the latest of rls / outbox / idempotency when those are on).
+
+RLS note: these org-scoped money tables are deliberately NOT in the P4 RLS _TENANT_TABLES (a
+deferred follow-up; wallet_transactions has no organization_id column). Isolation today rests on the
+router's get_current_membership + explicit organization_id filters on every query.
 """
 
 from collections.abc import Sequence
@@ -61,6 +65,7 @@ def upgrade() -> None:
         sa.Column("charged_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("organization_id", "period_start", name="uq_invoice_org_period"),
     )
     op.create_index(
         op.f("ix_invoices_organization_id"), "invoices", ["organization_id"], unique=False
@@ -111,9 +116,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        op.f("ix_wallet_transactions_idempotency_key"), table_name="wallet_transactions"
-    )
+    op.drop_index(op.f("ix_wallet_transactions_idempotency_key"), table_name="wallet_transactions")
     op.drop_index(op.f("ix_wallet_transactions_wallet_id"), table_name="wallet_transactions")
     op.drop_table("wallet_transactions")
     op.drop_index(op.f("ix_customer_wallets_organization_id"), table_name="customer_wallets")

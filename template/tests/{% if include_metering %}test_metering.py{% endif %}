@@ -1,0 +1,215 @@
+"""Metering tests — rating engine, the Postgres-native service, and the router. No live infra.
+
+Runs against the throwaway SQLite database from `conftest.pytest_configure`. Proves: the pure rating
+engine (base + included quota + overage), idempotent ingest, period aggregation, rate→invoice, the
+ATOMIC wallet debit (paid / idempotent / uncollectible), idempotent top-up, and the org-scoped API
+end to end (the free-plan path, so it needs no billing module). Requires the `db` + `users` extras.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
+
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+from app.metering.models import Invoice, UsageEvent
+from app.metering.rating import rate, total_cents
+from app.metering.service import SqlMeteringService
+from app.tenancy.models import Membership, Organization  # noqa: F401  (register tables)
+from app.users.models import User  # noqa: F401  (register the user table)
+
+_EPOCH = datetime(1970, 1, 1)
+_FUTURE = datetime(2100, 1, 1)
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+async def _make_org() -> uuid.UUID:
+    async with SessionFactory() as session:
+        org = Organization(name="Acme", slug="acme")
+        session.add(org)
+        await session.flush()
+        org_id = org.id
+        await session.commit()
+    return org_id
+
+
+# --- rating engine (pure) ----------------------------------------------------------------------
+
+
+def test_rate_free_plan_has_no_billable_lines() -> None:
+    # free: base 0 + a hard-cap meter (overage_cents=0) → nothing billed even far over quota.
+    assert rate("free", {"api_calls": 50_000}) == []
+
+
+def test_rate_pro_plan_base_plus_overage() -> None:
+    lines = rate("pro", {"api_calls": 150_000})  # 50_000 over the 100_000 included, at 1c
+    assert [line.kind for line in lines] == ["base", "overage"]
+    assert total_cents(lines) == 4_900 + 50_000 * 1
+
+
+def test_rate_unknown_plan_falls_back_to_free() -> None:
+    assert rate("does-not-exist", {"api_calls": 999_999}) == []
+
+
+# --- service (Postgres-native, on SQLite) ------------------------------------------------------
+
+
+async def test_record_usage_is_idempotent() -> None:
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    async with SessionFactory() as session:
+        assert await service.record_usage(session, org_id, "api_calls", 100, idempotency_key="u1")
+    async with SessionFactory() as session:
+        # same key → counted once
+        assert not await service.record_usage(
+            session, org_id, "api_calls", 100, idempotency_key="u1"
+        )
+    async with SessionFactory() as session:
+        usage = await service.usage_for_period(session, org_id, start=_EPOCH, end=_FUTURE)
+    assert usage == {"api_calls": 100}
+
+
+async def test_usage_aggregates_per_meter() -> None:
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    for i, (meter, qty) in enumerate([("api_calls", 100), ("api_calls", 50), ("tokens", 1_000)]):
+        async with SessionFactory() as session:
+            await service.record_usage(session, org_id, meter, qty, idempotency_key=f"k{i}")
+    async with SessionFactory() as session:
+        usage = await service.usage_for_period(session, org_id, start=_EPOCH, end=_FUTURE)
+    assert usage == {"api_calls": 150, "tokens": 1_000}
+
+
+async def test_invoice_then_charge_debits_wallet_and_is_idempotent() -> None:
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    async with SessionFactory() as session:
+        await service.record_usage(session, org_id, "api_calls", 150_000, idempotency_key="x")
+    async with SessionFactory() as session:
+        await service.top_up(session, org_id, 1_000_000, idempotency_key="topup1")
+
+    async with SessionFactory() as session:
+        invoice = await service.invoice_period(session, org_id, "pro", start=_EPOCH, end=_FUTURE)
+        assert invoice.total_cents == 4_900 + 50_000
+        charged = await service.charge_invoice(session, invoice)
+        assert charged.status == "paid"
+        # charge again on the SAME invoice → no second debit (idempotent on status).
+        again = await service.charge_invoice(session, charged)
+        assert again.status == "paid"
+
+    async with SessionFactory() as session:
+        wallet = await service.get_wallet(session, org_id)
+        assert wallet is not None
+        assert wallet.balance_cents == 1_000_000 - (4_900 + 50_000)  # debited exactly once
+
+
+async def test_charge_without_funds_is_uncollectible() -> None:
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    async with SessionFactory() as session:
+        await service.record_usage(session, org_id, "api_calls", 150_000, idempotency_key="y")
+    async with SessionFactory() as session:
+        invoice = await service.invoice_period(session, org_id, "pro", start=_EPOCH, end=_FUTURE)
+        charged = await service.charge_invoice(session, invoice)
+        assert charged.status == "uncollectible"  # no wallet / insufficient balance
+
+
+async def test_top_up_is_idempotent() -> None:
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    async with SessionFactory() as session:
+        await service.top_up(session, org_id, 5_000, idempotency_key="t1")
+    async with SessionFactory() as session:
+        wallet = await service.top_up(session, org_id, 5_000, idempotency_key="t1")  # retried
+    assert wallet.balance_cents == 5_000  # applied once
+
+
+async def test_invoice_period_converges_for_the_same_period() -> None:
+    # UNIQUE (org, period_start): a second close for the same period returns the existing invoice
+    # rather than double-invoicing (the safety behind concurrent / retried close).
+    org_id = await _make_org()
+    service = SqlMeteringService()
+    async with SessionFactory() as session:
+        await service.record_usage(session, org_id, "api_calls", 100, idempotency_key="x")
+    async with SessionFactory() as session:
+        first = await service.invoice_period(session, org_id, "free", start=_EPOCH, end=_FUTURE)
+    async with SessionFactory() as session:
+        second = await service.invoice_period(session, org_id, "free", start=_EPOCH, end=_FUTURE)
+    assert first.id == second.id
+    async with SessionFactory() as session:
+        invoices = (await session.execute(select(Invoice))).scalars().all()
+    assert len(invoices) == 1
+
+
+# --- router (org-scoped, end to end via the real app) ------------------------------------------
+
+
+async def _login(client: AsyncClient, email: str, password: str) -> dict[str, str]:
+    r = await client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    r = await client.post("/auth/jwt/login", data={"username": email, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def test_router_ingest_summary_topup_invoice(client: AsyncClient) -> None:
+    auth = await _login(client, "owner@example.com", "s3cret-passw0rd")
+    r = await client.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+    assert r.status_code == 201, r.text
+    org_id = r.json()["id"]
+
+    r = await client.post(
+        f"/orgs/{org_id}/usage",
+        json={"meter": "api_calls", "quantity": 500, "idempotency_key": "evt-1"},
+        headers=auth,
+    )
+    assert r.status_code == 202
+    assert r.json() == {"recorded": True}
+    # retry → idempotent
+    r = await client.post(
+        f"/orgs/{org_id}/usage",
+        json={"meter": "api_calls", "quantity": 500, "idempotency_key": "evt-1"},
+        headers=auth,
+    )
+    assert r.json() == {"recorded": False}
+
+    r = await client.get(f"/orgs/{org_id}/usage", headers=auth)
+    assert r.json()["usage"] == {"api_calls": 500}
+
+    r = await client.post(
+        f"/orgs/{org_id}/wallet/top-up",
+        json={"amount_cents": 10_000, "idempotency_key": "tp-1"},
+        headers=auth,
+    )
+    assert r.status_code == 200
+    assert r.json()["balance_cents"] == 10_000
+
+    # Close the period: the free plan caps api_calls (no overage) → a zero invoice, trivially paid.
+    r = await client.post(f"/orgs/{org_id}/invoices", headers=auth)
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "paid"
+    assert r.json()["total_cents"] == 0
+
+    r = await client.get(f"/orgs/{org_id}/invoices", headers=auth)
+    assert len(r.json()) == 1
+
+    # the event ledger + wallet survived
+    async with SessionFactory() as session:
+        events = (await session.execute(select(UsageEvent))).scalars().all()
+        invoices = (await session.execute(select(Invoice))).scalars().all()
+    assert len(events) == 1
+    assert len(invoices) == 1

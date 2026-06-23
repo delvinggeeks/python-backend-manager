@@ -36,13 +36,21 @@ from app.metering.schemas import (
     WalletTopUp,
 )
 from app.metering.service import SqlMeteringService
+{% if include_rbac %}
+from app.rbac import require_role
+{% endif %}
 from app.tenancy.dependencies import get_current_membership
+{% if include_rbac %}
+from app.tenancy.models import ADMIN, Membership
+{% else %}
 from app.tenancy.models import Membership
+{% endif %}
 
 router = APIRouter()
 _service = SqlMeteringService()
 # Usage before any invoice exists is rated from this far-past start (the "all-time" period).
-_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001  (a sentinel period start, not a real timestamp)
+# A sentinel "all-time" period start (used before any invoice exists), not a real timestamp.
+_EPOCH = datetime(1970, 1, 1)
 
 
 def _utcnow() -> datetime:
@@ -53,9 +61,7 @@ async def _period_start(session: AsyncSession, organization_id: uuid.UUID) -> da
     """The current period begins where the last invoice ended (or at the epoch if none)."""
     last_end = (
         await session.execute(
-            select(func.max(Invoice.period_end)).where(
-                Invoice.organization_id == organization_id
-            )
+            select(func.max(Invoice.period_end)).where(Invoice.organization_id == organization_id)
         )
     ).scalar_one_or_none()
     return last_end or _EPOCH
@@ -68,7 +74,7 @@ async def record_usage(
     membership: Membership = Depends(get_current_membership),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, bool]:
-    """Record a usage event. Idempotent: a retried ``idempotency_key`` returns ``recorded=False``."""
+    """Record a usage event. Idempotent: a retried key returns ``recorded=False``."""
     recorded = await _service.record_usage(
         session,
         org_id,
@@ -96,7 +102,11 @@ async def usage_summary(
 async def top_up_wallet(
     org_id: uuid.UUID,
     payload: WalletTopUp,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
     membership: Membership = Depends(get_current_membership),
+{% endif %}
     session: AsyncSession = Depends(get_session),
 ) -> WalletRead:
     """Add prepaid credits. Idempotent: a retried ``idempotency_key`` applies once."""
@@ -119,21 +129,21 @@ async def get_wallet(
     return WalletRead(balance_cents=wallet.balance_cents, currency=wallet.currency)
 
 
-@router.post(
-    "/{org_id}/invoices", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED
-)
+@router.post("/{org_id}/invoices", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED)
 async def close_invoice(
     org_id: uuid.UUID,
+{% if include_rbac %}
+    membership: Membership = Depends(require_role(ADMIN)),
+{% else %}
     membership: Membership = Depends(get_current_membership),
+{% endif %}
     session: AsyncSession = Depends(get_session),
 ) -> Invoice:
     """Close the current period: rate the usage against the org's plan, then charge the wallet."""
     plan = DEFAULT_PLAN
 {% if include_billing %}
     subscription = (
-        await session.execute(
-            select(Subscription).where(Subscription.organization_id == org_id)
-        )
+        await session.execute(select(Subscription).where(Subscription.organization_id == org_id))
     ).scalar_one_or_none()
     if subscription is not None and subscription.status in ACTIVE_STATUSES:
         plan = subscription.plan
@@ -151,8 +161,6 @@ async def list_invoices(
 ) -> list[Invoice]:
     """The org's invoices, newest first."""
     result = await session.execute(
-        select(Invoice)
-        .where(Invoice.organization_id == org_id)
-        .order_by(Invoice.created_at.desc())
+        select(Invoice).where(Invoice.organization_id == org_id).order_by(Invoice.created_at.desc())
     )
     return list(result.scalars().all())

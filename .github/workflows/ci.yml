@@ -163,6 +163,12 @@ jobs:
           # org.created / member.added flows record audit entries, member.added fans out a webhook,
           # and each delivery attempt is recorded to the audit log — the full cross-module path.
           - { capability: audit_webhooks, data: "--data include_audit=true --data include_webhooks=true --data include_rbac=true", extras: "--extra db --extra users --extra worker" }
+          # Metering is org-scoped (implies tenancy). The ALONE row runs metering+tenancy with the
+          # default (free) rate card — ingest→aggregate→invoice→wallet-charge + the rating engine.
+          # The _full row adds billing so the plan (and thus the rate card) comes from the org's
+          # Subscription, exercising the metering↔billing seam.
+          - { capability: metering,      data: "--data include_metering=true --data include_tenancy=true", extras: "--extra db --extra users" }
+          - { capability: metering_full, data: "--data include_metering=true --data include_billing=true --data include_audit=true --data include_rbac=true", extras: "--extra db --extra users --extra payments" }
           # Observability is capability-independent. The base row runs it ALONE at minimal deps
           # (no db/users/jobs) so any dependency leak surfaces (the OTel SDK + Prometheus + Sentry
           # install and import, /healthz + /readyz + /metrics serve, setup no-ops with no OTLP
