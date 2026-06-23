@@ -49,6 +49,10 @@ building any new subsystem, **read `docs/` — it is canonical and overrides ad-
 - `docs/AI-AGENTIC-STACK.md` — the AI-native application layer (LLM gateway + token metering, agent
   runtime, RAG, memory, evals/tracing, guardrails/MCP-safety); the AI counterpart to LIBRARY-DECISIONS,
   sequenced as ROADMAP Wave 5. Its defining seam: token-usage → `MeteringPort` (AI cost = billable unit).
+- `docs/MONETIZATION.md` — the monetization **decision** layer above the billing plumbing: the
+  revenue-model & packaging engine (`PricingPort`, pricing-as-versioned-data, multi-stream) + **AI pricing
+  intelligence** (`PricingIntelligencePort`, recommend/dynamic/experiment, human-gated). ROADMAP Wave 9
+  (P39/P40); founder gates D19/D20.
 - `docs/GAP-ANALYSIS.md` — what's BUILD-NOW vs SEAM-NOW vs FINE-AS-IS, and why (incl. gold-plating
   explicitly rejected — don't build the deferred items without a real trigger).
 - `docs/COVERAGE-MATRIX.md` — the 360° subsystem checklist (shipped / spec'd / adding / gap / out-of-scope).

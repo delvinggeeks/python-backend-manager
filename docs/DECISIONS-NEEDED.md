@@ -206,6 +206,28 @@ engine (**Stripe Tax / Anrok / Avalara**)?
 (P34 analytics, P35 dev-platform, P36 i18n, P37 media, P38 tenant-lifecycle have sensible
 cost-effective defaults and no founder fork — they proceed on the recommended defaults.)
 
+## Wave 9 decisions (monetization intelligence — see [MONETIZATION.md](MONETIZATION.md))
+
+## D19 · Revenue streams + pricing philosophy  ⭐ (product/strategy)
+**Question:** which revenue streams does P39's packaging engine compose by default, and what's the pricing
+philosophy — **per-seat**, **pure-usage**, or **hybrid** (base + included quota + overage), plus whether to
+ship **prepaid credits** and **API-product** pricing?
+- **Recommended default:** **hybrid** (subscription base + included quota + usage overage) with **prepaid
+  credits** on (the AI-usage-priced norm) and the API-product + marketplace streams **seamed but off** until
+  the dev-platform (P35) ships. Pricing lives as **versioned data**, so this is reversible without a deploy.
+- **Affects:** P39 default catalog shape + which `stream.kind`s are wired in CI.
+- **Need from you:** ✅ hybrid+credits default, or name the streams/philosophy you want.
+
+## D20 · Dynamic / personalized pricing  ⚠️ (legal/fairness — needs explicit sign-off)
+**Question:** may P40's AI pricing intelligence ever apply **dynamic or personalized** prices (per-tenant /
+per-segment), or is it **recommend-only** with a human approving every change?
+- **Recommended default:** **recommend-only + human approval**, dynamic/personalized pricing **OFF**. The
+  `rules+forecast` baseline + the optional `llm` adapter only *propose* changes (rationale + confidence +
+  guardrails); a human applies them. Personalized pricing raises **fairness/anti-discrimination + DPDP/EU**
+  exposure and must not be auto-enabled.
+- **Affects:** whether P40 ships a live dynamic-pricing policy or only the recommend→approve loop.
+- **Need from you:** ⚠️ explicit yes/no on enabling dynamic/personalized pricing (default is **no**).
+
 ---
 
 ### How to respond
@@ -215,4 +237,6 @@ shippable posture. Revisit D1-D3 before Wave 3; D4-D8 before their phases; **D9-
 (D9, the LLM-gateway/metering posture, is the AI counterpart to D1 and the most consequential);
 **D14-D16 before Wave 6** — **D14 (crypto + India compliance) is a legal/regulatory call, not just
 engineering, and is the one item where "default" needs your explicit sign-off**; **D17 before Wave 7**;
-**D18 before Wave 8** (tax — and watch the India e-invoicing ₹5 Cr threshold).
+**D18 before Wave 8** (tax — and watch the India e-invoicing ₹5 Cr threshold); **D19-D20 before Wave 9**
+(D19 the pricing philosophy; **D20 — dynamic/personalized pricing — is a legal/fairness call needing your
+explicit sign-off, default no**).

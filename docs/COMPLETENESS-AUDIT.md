@@ -31,6 +31,8 @@
 |---|---|
 | Subscriptions (Stripe/Razorpay port) | ✅ billing |
 | Usage metering → rating → invoicing | 📋 P7 |
+| **Revenue-model & packaging engine** (multi-stream; pricing-as-versioned-data; `PricingPort`) | 📋 P39 |
+| **AI pricing intelligence** (recommend / dynamic / churn / experiment; `PricingIntelligencePort`) | 📋 P40 |
 | Entitlements / feature gating; quotas | ✅ / 📋 P8/P18 |
 | Crypto / blockchain payments (Beldex/stablecoins) | 📋 P30 |
 | **Tax & invoicing compliance** (India GST + e-invoicing, VAT, US nexus) | 📋 P33 |

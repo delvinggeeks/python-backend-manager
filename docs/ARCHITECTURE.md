@@ -77,6 +77,8 @@ Legend: **status** = ✅ exists · ➕ build-now (this roadmap) · 🔌 seam-now
 |---|---|---|---|---|
 | **PaymentsPort** | ✅ | Razorpay / Stripe (subscriptions) | Orb/Metronome (managed billing) | `payments_provider` |
 | **MeteringPort** + **BillingPort** (usage→rating→invoice) | ➕ | **Postgres-native** metering+rating+invoice core (events/outbox/wallet) | Lago / OpenMeter (self-host) · Stripe Meters / Orb (managed) | `metering_provider` |
+| **PricingPort** + **PackagingPort** (revenue model, P39) | 🔌 | **Postgres-native** pricing catalog — pricing as versioned data; multi-stream resolve + proration | Stripe Billing · Lago (self-host) · Metronome / Orb | `pricing_provider` |
+| **PricingIntelligencePort** (revenue optimization, P40) | 🔌 | **`rules+forecast`** baseline (deterministic, no LLM) | **`llm`** adapter via `LLMPort`/P21 (token-metered); offline elasticity model | `pricing_ai_provider` |
 | **EmailPort** | ✅ | SMTP (aiosmtplib) / console | Amazon SES | `email_provider` |
 | **NotificationPort** (multi-channel) | 🔌 | in-app (Postgres) + email; FCM push | SMS (MSG91) · WhatsApp (Gupshup) · Novu orchestrator (self-host, MIT) | `notification_provider` per channel |
 | **StoragePort** (object storage) | ✅ | **Cloudflare R2** (zero-egress) via S3-compat | AWS S3 / MinIO / B2 | `s3_endpoint_url` |
