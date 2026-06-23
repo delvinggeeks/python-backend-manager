@@ -90,7 +90,7 @@ class WalletTransaction(Base):
     )
     delta_cents: Mapped[int] = mapped_column(BigInteger)  # + top-up, − debit
     reason: Mapped[str] = mapped_column(String(64))
-    # UNIQUE so a retried top-up / debit applies once (idempotent wallet mutation).
-    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True)
+    # UNIQUE (index) so a retried top-up / debit applies once (idempotent wallet mutation).
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     invoice_id: Mapped[uuid.UUID | None] = mapped_column(GUID, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

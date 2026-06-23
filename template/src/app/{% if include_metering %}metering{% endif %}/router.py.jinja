@@ -1,0 +1,158 @@
+"""Metering router (org-scoped, mounted under ``/orgs``). Requires the `db` + `users` extras.
+
+    POST   /orgs/{org_id}/usage            record a usage event (idempotent)
+    GET    /orgs/{org_id}/usage            current-period per-meter totals
+    POST   /orgs/{org_id}/wallet/top-up    add prepaid credits (idempotent)
+    GET    /orgs/{org_id}/wallet           prepaid balance
+    POST   /orgs/{org_id}/invoices         close the period: rate the usage → charge the wallet
+    GET    /orgs/{org_id}/invoices         the org's invoices
+
+Every route is authorised by the caller's membership in ``{org_id}`` (the tenancy dependency). The
+plan that selects the rate card comes from the billing ``Subscription`` when that module is present,
+otherwise the default (free) card — so metering does not hard-depend on billing.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+{% if include_billing %}
+from app.billing.entitlements import ACTIVE_STATUSES
+from app.billing.models import Subscription
+{% endif %}
+from app.db.session import get_session
+from app.metering.models import Invoice
+from app.metering.rate_cards import DEFAULT_CURRENCY, DEFAULT_PLAN
+from app.metering.schemas import (
+    InvoiceRead,
+    UsageRecord,
+    UsageSummary,
+    WalletRead,
+    WalletTopUp,
+)
+from app.metering.service import SqlMeteringService
+from app.tenancy.dependencies import get_current_membership
+from app.tenancy.models import Membership
+
+router = APIRouter()
+_service = SqlMeteringService()
+# Usage before any invoice exists is rated from this far-past start (the "all-time" period).
+_EPOCH = datetime(1970, 1, 1)  # noqa: DTZ001  (a sentinel period start, not a real timestamp)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def _period_start(session: AsyncSession, organization_id: uuid.UUID) -> datetime:
+    """The current period begins where the last invoice ended (or at the epoch if none)."""
+    last_end = (
+        await session.execute(
+            select(func.max(Invoice.period_end)).where(
+                Invoice.organization_id == organization_id
+            )
+        )
+    ).scalar_one_or_none()
+    return last_end or _EPOCH
+
+
+@router.post("/{org_id}/usage", status_code=status.HTTP_202_ACCEPTED)
+async def record_usage(
+    org_id: uuid.UUID,
+    payload: UsageRecord,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    """Record a usage event. Idempotent: a retried ``idempotency_key`` returns ``recorded=False``."""
+    recorded = await _service.record_usage(
+        session,
+        org_id,
+        payload.meter,
+        payload.quantity,
+        idempotency_key=payload.idempotency_key,
+    )
+    return {"recorded": recorded}
+
+
+@router.get("/{org_id}/usage", response_model=UsageSummary)
+async def usage_summary(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> UsageSummary:
+    """Per-meter usage totals for the current (unbilled) period."""
+    start = await _period_start(session, org_id)
+    end = _utcnow()
+    usage = await _service.usage_for_period(session, org_id, start=start, end=end)
+    return UsageSummary(period_start=start, period_end=end, usage=usage)
+
+
+@router.post("/{org_id}/wallet/top-up", response_model=WalletRead)
+async def top_up_wallet(
+    org_id: uuid.UUID,
+    payload: WalletTopUp,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> WalletRead:
+    """Add prepaid credits. Idempotent: a retried ``idempotency_key`` applies once."""
+    wallet = await _service.top_up(
+        session, org_id, payload.amount_cents, idempotency_key=payload.idempotency_key
+    )
+    return WalletRead(balance_cents=wallet.balance_cents, currency=wallet.currency)
+
+
+@router.get("/{org_id}/wallet", response_model=WalletRead)
+async def get_wallet(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> WalletRead:
+    """The org's prepaid balance (zero if it has never been topped up)."""
+    wallet = await _service.get_wallet(session, org_id)
+    if wallet is None:
+        return WalletRead(balance_cents=0, currency=DEFAULT_CURRENCY)
+    return WalletRead(balance_cents=wallet.balance_cents, currency=wallet.currency)
+
+
+@router.post(
+    "/{org_id}/invoices", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED
+)
+async def close_invoice(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Invoice:
+    """Close the current period: rate the usage against the org's plan, then charge the wallet."""
+    plan = DEFAULT_PLAN
+{% if include_billing %}
+    subscription = (
+        await session.execute(
+            select(Subscription).where(Subscription.organization_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if subscription is not None and subscription.status in ACTIVE_STATUSES:
+        plan = subscription.plan
+{% endif %}
+    start = await _period_start(session, org_id)
+    invoice = await _service.invoice_period(session, org_id, plan, start=start, end=_utcnow())
+    return await _service.charge_invoice(session, invoice)
+
+
+@router.get("/{org_id}/invoices", response_model=list[InvoiceRead])
+async def list_invoices(
+    org_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> list[Invoice]:
+    """The org's invoices, newest first."""
+    result = await session.execute(
+        select(Invoice)
+        .where(Invoice.organization_id == org_id)
+        .order_by(Invoice.created_at.desc())
+    )
+    return list(result.scalars().all())
