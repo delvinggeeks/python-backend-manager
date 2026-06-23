@@ -15,7 +15,7 @@ from arq.connections import RedisSettings
 
 from app.core.logging import configure_logging, get_logger
 from app.jobs.queue import redis_settings as build_redis_settings
-from app.jobs.tasks import {% if include_webhooks %}deliver_webhook, {% endif %}example_task{% if include_email %}, send_email_task{% endif +%}
+from app.jobs.tasks import {% if include_webhooks %}deliver_webhook, {% endif %}example_task{% if include_webhooks %}, relay_outbox{% endif %}{% if include_email %}, send_email_task{% endif +%}
 
 log = get_logger(__name__)
 
@@ -46,10 +46,20 @@ class WorkerSettings:
 {% endif %}
 {% if include_webhooks %}
         deliver_webhook,
+        relay_outbox,
 {% endif %}
     ]
+{% if include_webhooks %}
+    # Recurring schedule (arq cron). The outbox relay runs every 10s so webhook delivery stays
+    # low-latency while crash-safe; the example heartbeat runs every 5 minutes.
+    cron_jobs: ClassVar[list[Any]] = [
+        cron(heartbeat, minute=set(range(0, 60, 5))),
+        cron(relay_outbox, second=set(range(0, 60, 10))),
+    ]
+{% else %}
     # Recurring schedule (arq cron) — this example runs every 5 minutes.
     cron_jobs: ClassVar[list[Any]] = [cron(heartbeat, minute=set(range(0, 60, 5)))]
+{% endif %}
     redis_settings: RedisSettings = build_redis_settings()
     on_startup = staticmethod(startup)
     on_shutdown = staticmethod(shutdown)
