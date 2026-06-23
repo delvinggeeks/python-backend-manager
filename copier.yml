@@ -248,6 +248,20 @@ include_webhooks:
     Implies the jobs capability (worker extra) plus the tenancy capability (its users + db).
   default: false
 
+include_idempotency:
+  type: bool
+  help: >-
+    Add Stripe-style idempotency keys for mutating requests: a pure-ASGI middleware that, when a
+    client sends an `Idempotency-Key` header on a POST/PUT/PATCH/DELETE, atomically claims the key
+    in a Postgres `idempotency_keys` store (the UNIQUE constraint IS the lock), runs the handler
+    once, caches the response, and replays that exact response on any retry — so a network retry
+    can't double-charge or double-submit. Concurrent duplicates get 409; a key reused with a
+    different request body gets 422; keys expire (TTL) and are reclaimed. Swappable behind an
+    `IdempotencyPort` (a Redis adapter is possible later). Implies the db extra; no-ops for any
+    request without the header, so it's safe to leave on. On by default for database services.
+  default: "{{ include_db }}"
+  when: "{{ include_db }}"
+
 include_admin:
   type: bool
   help: >-

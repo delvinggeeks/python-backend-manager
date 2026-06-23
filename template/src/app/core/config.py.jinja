@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     database_url_privileged: str | None = None
 {% endif %}
     redis_url: str | None = None
+{% if include_idempotency %}
+
+    # --- Idempotency (only used if the `idempotency` capability is installed) ---
+    #     How long a claimed Idempotency-Key is honoured: a retry within the window replays the
+    #     cached response; after it the key is treated as absent (reclaimable). Default 24h.
+    idempotency_ttl_seconds: int = 86400
+    # A mutating request whose body exceeds this is passed through un-deduped (not buffered whole),
+    # and a response larger than this isn't cached — bounds middleware memory. Default 1 MiB.
+    idempotency_max_body_bytes: int = 1048576
+{% endif %}
 
     # --- LLM providers (only used if `llm` / an agent extra is installed) ---
     anthropic_api_key: str | None = None

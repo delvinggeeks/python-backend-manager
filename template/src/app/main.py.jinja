@@ -15,6 +15,9 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.lifespan import lifespan
 from app.core.middleware import SecurityHeadersMiddleware
+{% if include_idempotency %}
+from app.idempotency import IdempotencyMiddleware, SqlIdempotencyStore
+{% endif %}
 {% if include_rls %}
 from app.tenancy.rls import TenantContextMiddleware
 {% endif %}
@@ -41,6 +44,17 @@ def create_app() -> FastAPI:
         debug=settings.debug,
         lifespan={% if include_mcp %}_combined_lifespan{% else %}lifespan{% endif %},
     )
+{% if include_idempotency %}
+    # Added first → innermost (wraps routing): it dedupes a repeated Idempotency-Key on a mutating
+    # request and replays the cached handler response without re-running it. Innermost so a replay /
+    # 409 / 422 still gets CORS + security headers from the outer middleware on the way out.
+    app.add_middleware(
+        IdempotencyMiddleware,
+        store=SqlIdempotencyStore(),
+        ttl_seconds=settings.idempotency_ttl_seconds,
+        max_body_bytes=settings.idempotency_max_body_bytes,
+    )
+{% endif %}
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
