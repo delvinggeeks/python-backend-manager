@@ -293,6 +293,29 @@ Tempo, logs in Loki, all correlated. Stack config lives in `observability/`.
 `just setup` · `just run` · `just test` · `just fmt` · `just check` ·
 `just upgrade` (libs) · `just template-update` (template) · `just docker-up`
 
+## Container image & supply chain
+
+`.github/workflows/release-image.yml` publishes a **signed, provenanced** image to GHCR on
+every push to `main` (and on `v*` tags). The pipeline: build the digest-pinned, reproducible
+image (`SOURCE_DATE_EPOCH`) → attach a **CycloneDX SBOM** → Trivy-scan → **keyless-sign** with
+cosign (Sigstore via GitHub OIDC — no long-lived keys) → attach **SLSA build provenance**.
+No secrets to configure; it uses the workflow's `GITHUB_TOKEN` + OIDC. Delete the workflow if
+this service doesn't ship a container.
+
+Verify a pulled image (`OWNER`/`REPO` lowercased, `DIGEST` = `sha256:...`):
+
+```bash
+cosign verify ghcr.io/OWNER/REPO@DIGEST \
+  --certificate-identity-regexp '^https://github.com/OWNER/REPO/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/OWNER/REPO@DIGEST --owner OWNER
+```
+
+Actions are SHA-pinned (Renovate keeps the digests current); the Trivy scan is report-only by
+default — flip it to `exit-code: "1"` to block a publish on a fixable HIGH/CRITICAL CVE. The
+SLSA-provenance step runs on public repos (on Free/Pro/Team the attestation API is public-only);
+on **GitHub Enterprise Cloud** drop the `if:` on that step to attest private repos too.
+
 ## Working with Claude
 
 This service is born Claude-ready. `AGENTS.md` holds the conventions and decision

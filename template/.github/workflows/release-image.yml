@@ -1,0 +1,94 @@
+name: Release image
+
+# Publish a SIGNED, PROVENANCED container image to GHCR on every push to main and on version
+# tags. Supply-chain hardening (template P2c): build the digest-pinned, reproducible image, emit
+# an SBOM attestation, sign keylessly with cosign (Sigstore Fulcio/Rekor via GitHub OIDC — no
+# long-lived keys), and attach SLSA build provenance. Verify a pulled image with:
+#   cosign verify ghcr.io/<owner>/<repo>@<digest> \
+#     --certificate-identity-regexp '^https://github.com/<owner>/<repo>/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#   gh attestation verify oci://ghcr.io/<owner>/<repo>@<digest> --owner <owner>
+# Delete this file if a service does not publish a container image.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write      # push the image to GHCR
+  id-token: write      # cosign keyless signing + provenance (GitHub OIDC)
+  attestations: write  # store the SLSA build-provenance attestation
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Resolve image name (lowercased) + commit timestamp
+        run: |
+          # GHCR requires a lowercase path; the owner/repo may contain uppercase.
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          # SOURCE_DATE_EPOCH = commit time, so BuildKit rewrites layer timestamps (reproducible).
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
+      - name: Set up Buildx (container driver — needed for SBOM/provenance attestations)
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags + labels
+        id: meta
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Build + push (SBOM attestation; reproducible timestamps)
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+          sbom: true
+          # SLSA provenance is attested below (GitHub-native, verifiable with `gh attestation`).
+          provenance: false
+
+      - name: Scan the pushed image (Trivy — surface fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Report-only by default — promote to exit-code "1" once you triage/waiver CVEs.
+          exit-code: "0"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the image (keyless — Sigstore via GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # SLSA provenance is stored in GitHub's attestation API, which on Free/Pro/Team plans is
+      # PUBLIC-repos-only (a private repo would 403 and fail the job). Best-effort: run it where it
+      # works; the image is still signed + SBOM'd regardless. On Enterprise Cloud (where private
+      # repos can attest too) drop this `if:` to get provenance on private repos as well.
+      - name: Attest SLSA build provenance (pushed to the registry)
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
