@@ -10,6 +10,10 @@ Docker / testcontainers isn't available (e.g. the default SQLite-only test runs)
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
 import uuid
 
 import pytest
@@ -140,3 +144,90 @@ async def test_bypassrls_role_is_never_scoped(postgres_dsn: str) -> None:
         }, "BYPASSRLS role was wrongly scoped"
     finally:
         await trusted.close()
+
+
+# Driven in a subprocess (a fresh import reads DATABASE_URL / DATABASE_URL_PRIVILEGED from the env).
+_APP_FLOW = textwrap.dedent(
+    """
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+
+
+    async def main() -> None:
+        email, pw = "rls@example.com", "pw-12345678"
+        async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://t") as c:
+            r = await c.post("/auth/register", json={"email": email, "password": pw})
+            assert r.status_code == 201, r.text
+            r = await c.post("/auth/jwt/login", data={"username": email, "password": pw})
+            assert r.status_code == 200, r.text
+            auth = {"Authorization": "Bearer " + r.json()["access_token"]}
+            # POST /orgs is the empty-GUC bootstrap (writes the org.created audit row).
+            r = await c.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+            assert r.status_code == 201, r.text
+            org_id = r.json()["id"]
+            # With API keys present, mint one + auth with it (the lookup that 401'd before).
+            r = await c.post("/orgs/" + org_id + "/api-keys", json={"name": "k"}, headers=auth)
+            if r.status_code == 404:
+                print("FLOW_OK_NO_API_KEYS")
+                return
+            assert r.status_code == 201, r.text
+            r = await c.get("/whoami", headers={"X-API-Key": r.json()["key"]})
+            assert r.status_code == 200, r.text
+            print("FLOW_OK")
+
+    asyncio.run(main())
+    """
+)
+
+
+async def test_app_end_to_end_under_dual_role(postgres_dsn: str) -> None:
+    # The matrix runs RLS only on SQLite (a no-op); this runs the REAL migrations + the REAL ASGI
+    # app as the two roles on Postgres — catching a policy that references a missing column (alembic
+    # fails) and an empty-GUC write (POST /orgs 500s), neither of which is visible on SQLite.
+    host_db = postgres_dsn.split("://", 1)[1].split("@", 1)[
+        1
+    ]  # user:pw@host:port/db → host:port/db
+    owner_async = "postgresql+asyncpg://" + postgres_dsn.split("://", 1)[1]
+
+    su = await asyncpg.connect(postgres_dsn)
+    try:
+        await su.execute("CREATE ROLE app_rls LOGIN PASSWORD 'rls_pw'")
+        await su.execute("CREATE ROLE app_bypass LOGIN PASSWORD 'bypass_pw' BYPASSRLS")
+    finally:
+        await su.close()
+
+    # Apply the real migration chain as the owner — fails loudly if 0008's policy DDL is wrong.
+    migrate = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": owner_async},
+        capture_output=True,
+        text=True,
+    )
+    assert migrate.returncode == 0, f"alembic upgrade head failed:\n{migrate.stderr}"
+
+    su = await asyncpg.connect(postgres_dsn)
+    try:
+        await su.execute("GRANT USAGE ON SCHEMA public TO app_rls, app_bypass")
+        await su.execute(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+            "IN SCHEMA public TO app_rls, app_bypass"
+        )
+    finally:
+        await su.close()
+
+    flow = subprocess.run(
+        [sys.executable, "-c", _APP_FLOW],
+        env={
+            **os.environ,
+            "DATABASE_URL": f"postgresql+asyncpg://app_rls:rls_pw@{host_db}",
+            "DATABASE_URL_PRIVILEGED": f"postgresql+asyncpg://app_bypass:bypass_pw@{host_db}",
+            "USERS_JWT_SECRET": "rls-e2e-test-secret",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert flow.returncode == 0, f"app flow failed:\nSTDOUT {flow.stdout}\nSTDERR {flow.stderr}"
+    assert "FLOW_OK" in flow.stdout, flow.stdout

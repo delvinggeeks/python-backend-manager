@@ -18,22 +18,14 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 # Tenant DATA tables that get RLS. The control plane (organizations / memberships) is left out:
-# it's queried cross-org for "list my orgs" and is bootstrapped at org-creation time.
-_TENANT_TABLES = [
-{% if include_api_keys %}
-    "api_keys",
-{% endif %}
-{% if include_billing %}
-    "subscriptions",
-    "processed_events",
-{% endif %}
-{% if include_webhooks %}
-    "webhook_endpoints",
-{% endif %}
-{% if include_audit %}
-    "audit_logs",
-{% endif %}
-]
+# it's queried cross-org for "list my orgs" and is bootstrapped at org-creation time. Built inline
+# so the list renders as `[]` (not a multi-line literal) when a build has no tenant data tables.
+{% set _rls_tables = [] %}
+{% if include_api_keys %}{% set _ = _rls_tables.append("api_keys") %}{% endif %}
+{% if include_billing %}{% set _ = _rls_tables.append("subscriptions") %}{% endif %}
+{% if include_webhooks %}{% set _ = _rls_tables.append("webhook_endpoints") %}{% endif %}
+{% if include_audit %}{% set _ = _rls_tables.append("audit_logs") %}{% endif %}
+_TENANT_TABLES = [{% for t in _rls_tables %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 
 _POLICY = "tenant_isolation"
 # Reads (USING) are scoped to the current tenant. Writes (WITH CHECK) are allowed when there is
