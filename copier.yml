@@ -262,6 +262,25 @@ include_idempotency:
   default: "{{ include_db }}"
   when: "{{ include_db }}"
 
+include_metering:
+  type: bool
+  help: >-
+    Scaffold usage metering + rating + prepaid billing (the AI-usage-priced surface): an
+    `app/metering` package with org-scoped `/orgs/{org_id}/usage` (idempotent ingest + per-meter
+    totals), `/orgs/{org_id}/wallet` (prepaid credits, atomic debit) and `/orgs/{org_id}/invoices`
+    (close a period → rate the usage against the plan's rate card [base + included quota + overage]
+    → charge the wallet) routers, the `MeteringPort` + `BillingPort` seams with a Postgres-native
+    default adapter (managed Lago/OpenMeter/Stripe-Meters behind the same port), a pure rating
+    engine, and a migration. The plan that selects the rate card comes from the billing
+    `Subscription` when billing is on, else the default (free) card. **Requires (implies) the
+    tenancy capability** (it is org-scoped); pairs with billing. Implies the db extra.
+  default: false
+  validator: >-
+    {% if include_metering and not (include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks) %}
+    include_metering is org-scoped and needs the tenancy capability. Also enable one of:
+    include_tenancy / include_rbac / include_api_keys / include_billing / include_webhooks.
+    {% endif %}
+
 include_admin:
   type: bool
   help: >-
@@ -311,7 +330,7 @@ sync_extras:
     {% if include_auth %}{% set _ = parts.append('auth') %}{% endif %}
     {% if include_observability %}{% set _ = parts.append('observability') %}{% endif %}
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
-    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
+    {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin or include_metering %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% if include_audit %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% endif %}
     {% if include_admin %}{% if 'admin' not in parts %}{% set _ = parts.append('admin') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}

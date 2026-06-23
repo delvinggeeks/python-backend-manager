@@ -1,0 +1,130 @@
+"""metering: usage events, invoices, prepaid wallet
+
+Revision ID: 0011_metering
+Revises: {% if include_idempotency %}0010_idempotency{% elif include_webhooks %}0009_outbox{% elif include_rls %}0008_rls{% else %}0007_auth_sessions{% endif %}
+
+Create Date: ships with the template (include_metering)
+
+Usage→rating→invoice + prepaid-wallet tables. Metering implies tenancy (org-scoped), so this chains
+onto the auth-sessions migration (or the latest of rls / outbox / idempotency when those are on).
+
+RLS note: these org-scoped money tables are deliberately NOT in the P4 RLS _TENANT_TABLES (a
+deferred follow-up; wallet_transactions has no organization_id column). Isolation today rests on the
+router's get_current_membership + explicit organization_id filters on every query.
+"""
+
+from collections.abc import Sequence
+
+import fastapi_users_db_sqlalchemy.generics
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0011_metering"
+down_revision: str | Sequence[str] | None = {% if include_idempotency %}"0010_idempotency"{% elif include_webhooks %}"0009_outbox"{% elif include_rls %}"0008_rls"{% else %}"0007_auth_sessions"{% endif %}
+
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+_GUID = fastapi_users_db_sqlalchemy.generics.GUID
+
+
+def upgrade() -> None:
+    op.create_table(
+        "usage_events",
+        sa.Column("id", _GUID(), nullable=False),
+        sa.Column("organization_id", _GUID(), nullable=False),
+        sa.Column("meter", sa.String(length=64), nullable=False),
+        sa.Column("quantity", sa.BigInteger(), nullable=False),
+        sa.Column("idempotency_key", sa.String(length=255), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("organization_id", "idempotency_key", name="uq_usage_org_idem"),
+    )
+    op.create_index(
+        op.f("ix_usage_events_organization_id"), "usage_events", ["organization_id"], unique=False
+    )
+    op.create_index(op.f("ix_usage_events_meter"), "usage_events", ["meter"], unique=False)
+    op.create_index(
+        op.f("ix_usage_events_created_at"), "usage_events", ["created_at"], unique=False
+    )
+
+    op.create_table(
+        "invoices",
+        sa.Column("id", _GUID(), nullable=False),
+        sa.Column("organization_id", _GUID(), nullable=False),
+        sa.Column("period_start", sa.DateTime(), nullable=False),
+        sa.Column("period_end", sa.DateTime(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("currency", sa.String(length=3), nullable=False),
+        sa.Column("total_cents", sa.BigInteger(), nullable=False),
+        sa.Column("plan", sa.String(length=50), nullable=False),
+        sa.Column("lines", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("charged_at", sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("organization_id", "period_start", name="uq_invoice_org_period"),
+    )
+    op.create_index(
+        op.f("ix_invoices_organization_id"), "invoices", ["organization_id"], unique=False
+    )
+    op.create_index(op.f("ix_invoices_status"), "invoices", ["status"], unique=False)
+
+    op.create_table(
+        "customer_wallets",
+        sa.Column("id", _GUID(), nullable=False),
+        sa.Column("organization_id", _GUID(), nullable=False),
+        sa.Column("balance_cents", sa.BigInteger(), nullable=False),
+        sa.Column("currency", sa.String(length=3), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_customer_wallets_organization_id"),
+        "customer_wallets",
+        ["organization_id"],
+        unique=True,
+    )
+
+    op.create_table(
+        "wallet_transactions",
+        sa.Column("id", _GUID(), nullable=False),
+        sa.Column("wallet_id", _GUID(), nullable=False),
+        sa.Column("delta_cents", sa.BigInteger(), nullable=False),
+        sa.Column("reason", sa.String(length=64), nullable=False),
+        sa.Column("idempotency_key", sa.String(length=255), nullable=False),
+        sa.Column("invoice_id", _GUID(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["wallet_id"], ["customer_wallets.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_wallet_transactions_wallet_id"),
+        "wallet_transactions",
+        ["wallet_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_wallet_transactions_idempotency_key"),
+        "wallet_transactions",
+        ["idempotency_key"],
+        unique=True,
+    )
+
+
+def downgrade() -> None:
+    op.drop_index(op.f("ix_wallet_transactions_idempotency_key"), table_name="wallet_transactions")
+    op.drop_index(op.f("ix_wallet_transactions_wallet_id"), table_name="wallet_transactions")
+    op.drop_table("wallet_transactions")
+    op.drop_index(op.f("ix_customer_wallets_organization_id"), table_name="customer_wallets")
+    op.drop_table("customer_wallets")
+    op.drop_index(op.f("ix_invoices_status"), table_name="invoices")
+    op.drop_index(op.f("ix_invoices_organization_id"), table_name="invoices")
+    op.drop_table("invoices")
+    op.drop_index(op.f("ix_usage_events_created_at"), table_name="usage_events")
+    op.drop_index(op.f("ix_usage_events_meter"), table_name="usage_events")
+    op.drop_index(op.f("ix_usage_events_organization_id"), table_name="usage_events")
+    op.drop_table("usage_events")

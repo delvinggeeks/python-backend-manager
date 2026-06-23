@@ -118,6 +118,11 @@ def create_app() -> FastAPI:
     app.include_router(billing_router, prefix="/orgs", tags=["billing"])
     app.include_router(billing_webhook_router, prefix="/billing", tags=["billing"])
 {% endif %}
+{% if include_metering %}
+    from app.metering.router import router as metering_router
+
+    app.include_router(metering_router, prefix="/orgs", tags=["metering"])
+{% endif %}
 {% if include_audit %}
     from app.audit.router import router as audit_router
 
