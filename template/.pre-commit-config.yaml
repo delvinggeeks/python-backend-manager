@@ -2,12 +2,12 @@
 # Renovate's pre-commit manager keeps these revs current automatically.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.17
+    rev: v0.15.18
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.21
+    rev: 0.11.23
     hooks:
       - id: uv-lock   # keeps uv.lock in sync with pyproject.toml
