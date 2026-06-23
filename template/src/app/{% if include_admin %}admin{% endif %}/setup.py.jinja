@@ -9,7 +9,11 @@ from sqladmin import Admin
 from app.admin.auth import AdminAuth
 from app.admin.views import register_model_views
 from app.core.config import get_settings
+{% if include_rls %}
+from app.db.session import privileged_engine as engine  # admin spans all tenants → bypass RLS
+{% else %}
 from app.db.session import engine
+{% endif %}
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

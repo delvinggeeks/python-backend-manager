@@ -130,6 +130,18 @@ include_tenancy:
     Implies the users capability (and therefore the db + users extras).
   default: false
 
+include_rls:
+  type: bool
+  help: >-
+    Add Postgres Row-Level Security as a second tenant-isolation layer (a backstop to the
+    app-level org scoping): a per-request `app.current_tenant` GUC set from the URL, plus
+    `CREATE POLICY` + `FORCE ROW LEVEL SECURITY` on the tenant data tables, so a query that
+    forgets its `WHERE organization_id` still can't read another tenant's rows. Postgres-only
+    (a no-op on SQLite); needs session-mode connection pooling (see the PgBouncer note in
+    `app/tenancy/rls.py`). Implies the tenancy capability.
+  default: "{{ include_tenancy }}"
+  when: "{{ include_tenancy }}"
+
 include_rbac:
   type: bool
   help: >-

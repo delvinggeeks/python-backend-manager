@@ -1,0 +1,233 @@
+"""Cross-tenant isolation via Postgres Row-Level Security — needs Docker (testcontainers).
+
+Proves the P4 backstop directly against Postgres, as a LOW-PRIVILEGE app role (a superuser or
+table owner would BYPASS RLS — only ``FORCE ROW LEVEL SECURITY`` + a non-owner role exercises
+it). It applies the *same* policy DDL the ``0008_rls`` migration applies, then shows that a
+``SELECT`` which omits ``WHERE organization_id`` returns only the current tenant's rows, that a
+cross-tenant write is rejected, and that the policy drops cleanly (round-trip). Skipped when
+Docker / testcontainers isn't available (e.g. the default SQLite-only test runs).
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import textwrap
+import uuid
+
+import pytest
+
+pytest.importorskip("testcontainers.postgres")
+
+import asyncpg
+from testcontainers.postgres import PostgresContainer
+
+# The policy DDL mirrors migrations/versions/0008_rls.py (kept in sync deliberately).
+_TENANT = "NULLIF(current_setting('app.current_tenant', true), '')"
+_POLICY_DDL = (
+    "CREATE POLICY tenant_isolation ON rls_probe "
+    f"USING (organization_id = {_TENANT}::uuid) "
+    f"WITH CHECK ({_TENANT} IS NULL OR organization_id = {_TENANT}::uuid)"
+)
+
+
+@pytest.fixture(scope="module")
+def postgres_dsn() -> str:
+    """A throwaway Postgres (asyncpg DSN), or skip the module if Docker isn't available.
+
+    Only a *container-start* failure skips — a failure inside a test still fails the test (the
+    start/stop is kept out of the test's try/except so real RLS bugs are never masked as skips).
+    """
+    container = PostgresContainer("postgres:16-alpine")
+    try:
+        container.start()
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"Docker/testcontainers unavailable: {exc}")
+    try:
+        # testcontainers yields a SQLAlchemy/psycopg URL; asyncpg wants a plain postgres DSN.
+        yield container.get_connection_url().replace("postgresql+psycopg2", "postgresql")
+    finally:
+        container.stop()
+
+
+async def test_rls_isolates_a_low_privilege_role(postgres_dsn: str) -> None:
+    owner = await asyncpg.connect(postgres_dsn)
+    try:
+        # As the owner: build a tenant table, apply RLS (incl. FORCE so even the owner is bound),
+        # and create a non-superuser, non-owner role that the "app" connects as.
+        await owner.execute(
+            "CREATE TABLE rls_probe (organization_id uuid NOT NULL, val text NOT NULL)"
+        )
+        await owner.execute("ALTER TABLE rls_probe ENABLE ROW LEVEL SECURITY")
+        await owner.execute("ALTER TABLE rls_probe FORCE ROW LEVEL SECURITY")
+        await owner.execute(_POLICY_DDL)
+        await owner.execute("CREATE ROLE app_user LOGIN PASSWORD 'app_pw'")
+        await owner.execute("GRANT SELECT, INSERT ON rls_probe TO app_user")
+    finally:
+        await owner.close()
+
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    app_dsn = postgres_dsn.split("://", 1)[1].split("@", 1)[1]  # host:port/db
+    app = await asyncpg.connect(f"postgresql://app_user:app_pw@{app_dsn}")
+    try:
+        # No tenant context yet → the bootstrapping WITH CHECK allows seeding both tenants.
+        await app.execute(
+            "INSERT INTO rls_probe (organization_id, val) VALUES ($1, 'a'), ($2, 'b')",
+            org_a,
+            org_b,
+        )
+        # Become tenant A, then read WITHOUT a WHERE clause: RLS must hide tenant B's row.
+        await app.execute("SELECT set_config('app.current_tenant', $1, false)", str(org_a))
+        rows = await app.fetch("SELECT organization_id FROM rls_probe")
+        assert {r["organization_id"] for r in rows} == {org_a}, "RLS leaked another tenant's rows"
+
+        # Write isolation: as tenant A, inserting a row tagged for tenant B is rejected.
+        with pytest.raises(asyncpg.PostgresError):
+            await app.execute(
+                "INSERT INTO rls_probe (organization_id, val) VALUES ($1, 'x')", org_b
+            )
+    finally:
+        await app.close()
+
+    # Round-trip: dropping the policy + disabling RLS makes both rows visible again.
+    owner = await asyncpg.connect(postgres_dsn)
+    try:
+        await owner.execute("DROP POLICY tenant_isolation ON rls_probe")
+        await owner.execute("ALTER TABLE rls_probe DISABLE ROW LEVEL SECURITY")
+        await owner.execute("GRANT SELECT ON rls_probe TO app_user")
+    finally:
+        await owner.close()
+
+    app = await asyncpg.connect(f"postgresql://app_user:app_pw@{app_dsn}")
+    try:
+        await app.execute("SELECT set_config('app.current_tenant', $1, false)", str(org_a))
+        rows = await app.fetch("SELECT organization_id FROM rls_probe")
+        assert {r["organization_id"] for r in rows} == {org_a, org_b}, "RLS did not round-trip"
+    finally:
+        await app.close()
+
+
+async def test_bypassrls_role_is_never_scoped(postgres_dsn: str) -> None:
+    # The dual-role's trusted half: the privileged role (used by API-key auth / admin / inbound
+    # webhooks / workers via get_privileged_session) has BYPASSRLS, so it sees EVERY tenant's rows
+    # with no GUC set — those cross-tenant flows are never blocked, while the RLS role stays a
+    # strict backstop. This is what lets RLS be FORCE'd without breaking the app.
+    org_a, org_b = uuid.uuid4(), uuid.uuid4()
+    owner = await asyncpg.connect(postgres_dsn)
+    try:
+        await owner.execute(
+            "CREATE TABLE rls_probe2 (organization_id uuid NOT NULL, val text NOT NULL)"
+        )
+        await owner.execute("ALTER TABLE rls_probe2 ENABLE ROW LEVEL SECURITY")
+        await owner.execute("ALTER TABLE rls_probe2 FORCE ROW LEVEL SECURITY")
+        await owner.execute(_POLICY_DDL.replace("rls_probe", "rls_probe2"))
+        await owner.execute("CREATE ROLE trusted_user LOGIN PASSWORD 'trusted_pw' BYPASSRLS")
+        await owner.execute("GRANT SELECT, INSERT ON rls_probe2 TO trusted_user")
+        await owner.execute(
+            "INSERT INTO rls_probe2 (organization_id, val) VALUES ($1, 'a'), ($2, 'b')",
+            org_a,
+            org_b,
+        )
+    finally:
+        await owner.close()
+
+    app_dsn = postgres_dsn.split("://", 1)[1].split("@", 1)[1]
+    trusted = await asyncpg.connect(f"postgresql://trusted_user:trusted_pw@{app_dsn}")
+    try:
+        # No tenant GUC set — yet the BYPASSRLS role sees BOTH tenants (the auth/admin/webhook path
+        # that the RLS role, with no GUC, would see zero rows for — the bug the dual-role fixes).
+        rows = await trusted.fetch("SELECT organization_id FROM rls_probe2")
+        assert {r["organization_id"] for r in rows} == {
+            org_a,
+            org_b,
+        }, "BYPASSRLS role was wrongly scoped"
+    finally:
+        await trusted.close()
+
+
+# Driven in a subprocess (a fresh import reads DATABASE_URL / DATABASE_URL_PRIVILEGED from the env).
+_APP_FLOW = textwrap.dedent(
+    """
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+
+
+    async def main() -> None:
+        email, pw = "rls@example.com", "pw-12345678"
+        async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://t") as c:
+            r = await c.post("/auth/register", json={"email": email, "password": pw})
+            assert r.status_code == 201, r.text
+            r = await c.post("/auth/jwt/login", data={"username": email, "password": pw})
+            assert r.status_code == 200, r.text
+            auth = {"Authorization": "Bearer " + r.json()["access_token"]}
+            # POST /orgs is the empty-GUC bootstrap (writes the org.created audit row).
+            r = await c.post("/orgs", json={"name": "Acme", "slug": "acme"}, headers=auth)
+            assert r.status_code == 201, r.text
+            org_id = r.json()["id"]
+            # With API keys present, mint one + auth with it (the lookup that 401'd before).
+            r = await c.post("/orgs/" + org_id + "/api-keys", json={"name": "k"}, headers=auth)
+            if r.status_code == 404:
+                print("FLOW_OK_NO_API_KEYS")
+                return
+            assert r.status_code == 201, r.text
+            r = await c.get("/whoami", headers={"X-API-Key": r.json()["key"]})
+            assert r.status_code == 200, r.text
+            print("FLOW_OK")
+
+    asyncio.run(main())
+    """
+)
+
+
+async def test_app_end_to_end_under_dual_role(postgres_dsn: str) -> None:
+    # The matrix runs RLS only on SQLite (a no-op); this runs the REAL migrations + the REAL ASGI
+    # app as the two roles on Postgres — catching a policy that references a missing column (alembic
+    # fails) and an empty-GUC write (POST /orgs 500s), neither of which is visible on SQLite.
+    host_db = postgres_dsn.split("://", 1)[1].split("@", 1)[
+        1
+    ]  # user:pw@host:port/db → host:port/db
+    owner_async = "postgresql+asyncpg://" + postgres_dsn.split("://", 1)[1]
+
+    su = await asyncpg.connect(postgres_dsn)
+    try:
+        await su.execute("CREATE ROLE app_rls LOGIN PASSWORD 'rls_pw'")
+        await su.execute("CREATE ROLE app_bypass LOGIN PASSWORD 'bypass_pw' BYPASSRLS")
+    finally:
+        await su.close()
+
+    # Apply the real migration chain as the owner — fails loudly if 0008's policy DDL is wrong.
+    migrate = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": owner_async},
+        capture_output=True,
+        text=True,
+    )
+    assert migrate.returncode == 0, f"alembic upgrade head failed:\n{migrate.stderr}"
+
+    su = await asyncpg.connect(postgres_dsn)
+    try:
+        await su.execute("GRANT USAGE ON SCHEMA public TO app_rls, app_bypass")
+        await su.execute(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+            "IN SCHEMA public TO app_rls, app_bypass"
+        )
+    finally:
+        await su.close()
+
+    flow = subprocess.run(
+        [sys.executable, "-c", _APP_FLOW],
+        env={
+            **os.environ,
+            "DATABASE_URL": f"postgresql+asyncpg://app_rls:rls_pw@{host_db}",
+            "DATABASE_URL_PRIVILEGED": f"postgresql+asyncpg://app_bypass:bypass_pw@{host_db}",
+            "USERS_JWT_SECRET": "rls-e2e-test-secret",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert flow.returncode == 0, f"app flow failed:\nSTDOUT {flow.stdout}\nSTDERR {flow.stderr}"
+    assert "FLOW_OK" in flow.stdout, flow.stdout

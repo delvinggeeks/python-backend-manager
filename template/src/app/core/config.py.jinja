@@ -43,6 +43,12 @@ class Settings(BaseSettings):
 
     # --- Datastores (only used if the `db` / `cache` extras are installed) ---
     database_url: str | None = None  # postgresql+asyncpg://user:pass@host:5432/db
+{% if include_rls %}
+    # Trusted connection for cross-tenant flows (auth lookups, admin, inbound webhooks, workers).
+    # Point it at a BYPASSRLS / table-owner role in production; falls back to DATABASE_URL in dev.
+    # See app/tenancy/rls.py for the two-role model.
+    database_url_privileged: str | None = None
+{% endif %}
     redis_url: str | None = None
 
     # --- LLM providers (only used if `llm` / an agent extra is installed) ---

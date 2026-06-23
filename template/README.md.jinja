@@ -75,6 +75,35 @@ The `Organization` and `Membership` models live in `app.tenancy.models`; the per
 `role` is a free string (`owner` / `admin` / `member` by convention) ready to be enforced by
 a permissions layer.
 
+{% if include_rls %}
+### Tenant isolation (Postgres RLS)
+
+A second isolation layer backstops the app-level org scoping: every tenant **data** table has a
+Row-Level Security policy, and the per-tenant request path connects as an RLS-bound role with the
+`app.current_tenant` GUC set from `/orgs/{org_id}`. So a query that forgets its `WHERE
+organization_id` still can't read another tenant's rows. Postgres-only — a no-op on SQLite.
+
+**Two roles** keep it safe (RLS is `FORCE`d, so the table owner is bound too):
+
+- `DATABASE_URL` → a least-privilege, **RLS-bound** role — the per-tenant request path.
+- `DATABASE_URL_PRIVILEGED` → a **`BYPASSRLS`** role for flows that legitimately span tenants:
+  API-key auth, the admin panel, inbound provider webhooks, and background workers. Leave it unset
+  in dev and both use `DATABASE_URL` (`app.tenancy.rls` has the details).
+
+Provision once (as the DB owner; run migrations as the owner, the app connects as these roles):
+
+```sql
+CREATE ROLE app_rls     LOGIN PASSWORD '...';                -- DATABASE_URL
+CREATE ROLE app_trusted LOGIN PASSWORD '...' BYPASSRLS;      -- DATABASE_URL_PRIVILEGED
+GRANT USAGE ON SCHEMA public TO app_rls, app_trusted;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rls, app_trusted;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rls, app_trusted;
+```
+
+Use **session-mode** pooling (PgBouncer `session`, not `transaction`) so the session-level GUC
+stays attached to the backend connection for the whole request.
+{% endif %}
 {% if include_rbac %}
 ### Roles & permissions (RBAC)
 

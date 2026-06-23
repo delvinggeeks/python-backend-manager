@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api_keys.models import ApiKey
 from app.api_keys.security import split_key, utcnow, verify_secret
+{% if include_rls %}
+from app.db.session import get_privileged_session as get_session  # bypass RLS for key lookup
+{% else %}
 from app.db.session import get_session
+{% endif %}
 from app.users import fastapi_users
 from app.users.models import User
 

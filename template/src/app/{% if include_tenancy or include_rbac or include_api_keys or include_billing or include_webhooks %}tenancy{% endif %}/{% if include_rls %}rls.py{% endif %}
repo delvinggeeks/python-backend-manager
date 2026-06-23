@@ -1,0 +1,63 @@
+"""Per-request tenant context for Postgres Row-Level Security (RLS). Requires the `db` extra.
+
+THE TWO-ROLE MODEL (what makes RLS a real backstop, not just a footgun):
+
+* The per-tenant **request path** connects via ``app.db.session.get_session`` as an RLS-bound role.
+  This middleware reads the org id from ``/orgs/{org_id}/...`` into a ContextVar; ``get_session``
+  sets the Postgres ``app.current_tenant`` GUC from it, so the policies (the ``0008_rls`` migration)
+  scope every query to that tenant. A query that forgets ``WHERE organization_id`` still can't read
+  another tenant's rows — the app-level membership check authorizes access; RLS backstops the query.
+
+* Flows that legitimately span tenants — API-key authentication (looks a key up by global prefix),
+  the admin panel, inbound provider webhooks (resolve a row by the provider's id), and background
+  workers — have NO single tenant context, so they connect via ``get_privileged_session`` as a role
+  that BYPASSES RLS. That's why RLS can be ``FORCE``d on the tenant role without breaking the app:
+  the two concerns use two roles.
+
+Deployment: set ``DATABASE_URL`` to the RLS-bound role and ``DATABASE_URL_PRIVILEGED`` to a
+``BYPASSRLS`` (or table-owner) role; in dev, leave ``DATABASE_URL_PRIVILEGED`` unset and both use
+the same connection. Use **session-mode** connection pooling (PgBouncer ``session`` mode, not
+``transaction`` mode) so the session-level GUC stays attached to the backend for the request.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+from contextvars import ContextVar
+
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+# The current request's tenant (organization) id as a canonical string, or None off an org path.
+current_tenant_id: ContextVar[str | None] = ContextVar("current_tenant_id", default=None)
+
+# Strict UUID shape: a crafted path must not inject a non-uuid GUC (which would error the ::uuid
+# cast in the policy and 500 every query). The captured group is re-validated via uuid.UUID below.
+_ORG_PATH = re.compile(
+    r"^/orgs/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:/|$)"
+)
+
+
+class TenantContextMiddleware:
+    """Pure-ASGI middleware: stash the path's (validated) org id in ``current_tenant_id``."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Set the tenant ContextVar for the request's lifetime, then reset it."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        tenant: str | None = None
+        match = _ORG_PATH.match(scope.get("path", ""))
+        if match is not None:
+            try:
+                tenant = str(uuid.UUID(match.group(1)))  # canonicalize + final validation
+            except ValueError:
+                tenant = None
+        token = current_tenant_id.set(tenant)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_tenant_id.reset(token)

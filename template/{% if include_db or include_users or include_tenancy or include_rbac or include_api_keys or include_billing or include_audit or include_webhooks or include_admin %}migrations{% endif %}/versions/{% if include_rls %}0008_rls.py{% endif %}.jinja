@@ -1,0 +1,54 @@
+"""tenant Row-Level Security (Postgres backstop)
+
+Revision ID: 0008_rls
+Revises: 0007_auth_sessions
+
+Create Date: ships with the template (P4 — include_rls)
+
+"""
+
+from collections.abc import Sequence
+
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0008_rls"
+down_revision: str | Sequence[str] | None = "0007_auth_sessions"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+# Tenant DATA tables that get RLS. The control plane (organizations / memberships) is left out:
+# it's queried cross-org for "list my orgs" and is bootstrapped at org-creation time. Built inline
+# so the list renders as `[]` (not a multi-line literal) when a build has no tenant data tables.
+{% set _rls_tables = [] %}
+{% if include_api_keys %}{% set _ = _rls_tables.append("api_keys") %}{% endif %}
+{% if include_billing %}{% set _ = _rls_tables.append("subscriptions") %}{% endif %}
+{% if include_webhooks %}{% set _ = _rls_tables.append("webhook_endpoints") %}{% endif %}
+{% if include_audit %}{% set _ = _rls_tables.append("audit_logs") %}{% endif %}
+_TENANT_TABLES = [{% for t in _rls_tables %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+
+_POLICY = "tenant_isolation"
+# Reads (USING) are scoped to the current tenant. Writes (WITH CHECK) are allowed when there is
+# no tenant context — bootstrapping: org creation, system rows — and must otherwise match it.
+_TENANT = "NULLIF(current_setting('app.current_tenant', true), '')"
+_USING = f"organization_id = {_TENANT}::uuid"
+_CHECK = f"{_TENANT} IS NULL OR {_USING}"
+
+
+def upgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return  # RLS is Postgres-only — a no-op on SQLite (which has no row-level security).
+    # Table names are hardcoded literals from _TENANT_TABLES (never user input); S608 is
+    # ignored for migrations in pyproject.
+    for table in _TENANT_TABLES:
+        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(f"CREATE POLICY {_POLICY} ON {table} USING ({_USING}) WITH CHECK ({_CHECK})")
+
+
+def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    for table in _TENANT_TABLES:
+        op.execute(f"DROP POLICY IF EXISTS {_POLICY} ON {table}")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")

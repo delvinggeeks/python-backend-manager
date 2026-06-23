@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
+from app.db.session import {% if include_rls %}get_privileged_session, {% endif %}get_session
 {% if include_rbac %}
 from app.rbac import require_role, require_scope
 {% endif %}
@@ -40,7 +40,12 @@ router = APIRouter()
 async def create_organization(
     payload: OrganizationCreate,
     user: User = Depends(current_active_user),
-    session: AsyncSession = Depends(get_session),
+{% if include_rls %}
+    # Bootstrap flow: there is no tenant context yet (POST /orgs has no /orgs/{id}), so it uses the
+    # privileged session — the org + owner membership + the org.created audit row all write with no
+    # GUC, which the RLS path would reject. Every later org-scoped route uses the RLS session.
+{% endif %}
+    session: AsyncSession = Depends({% if include_rls %}get_privileged_session{% else %}get_session{% endif %}),
 ) -> Organization:
     """Create an organization; the caller becomes its owner."""
     org = Organization(name=payload.name, slug=payload.slug)
