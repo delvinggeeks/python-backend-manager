@@ -130,6 +130,19 @@ async def add_member(
     )
     session.add(new_membership)
     try:
+{% if include_webhooks %}
+        from app.webhooks import dispatch
+
+        # Emit member.added into THIS transaction: dispatch only flushes, so the commit below
+        # persists the membership and the event atomically (a duplicate-member rolls back both),
+        # closing the dual-write race that could drop a webhook when the queue was unreachable.
+        await dispatch(
+            session,
+            event_type="member.added",
+            organization_id=org_id,
+            data={"user_id": str(payload.user_id), "role": payload.role},
+        )
+{% endif %}
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -150,18 +163,6 @@ async def add_member(
         role=payload.role,
     )
     await session.commit()
-{% endif %}
-{% if include_webhooks %}
-    from app.webhooks import dispatch
-
-    # Best-effort fan-out: enqueues a signed delivery per subscribed endpoint. A dead queue
-    # is swallowed inside dispatch, so a webhook outage never breaks adding a member.
-    await dispatch(
-        session,
-        event_type="member.added",
-        organization_id=org_id,
-        data={"user_id": str(payload.user_id), "role": payload.role},
-    )
 {% endif %}
     return new_membership
 

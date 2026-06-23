@@ -164,4 +164,23 @@ async def deliver_webhook(
         )
         await session.commit()
 {% endif %}
+
+
+async def relay_outbox(ctx: dict[str, Any]) -> int:
+    """Drain the transactional outbox: publish pending events to their subscribed endpoints.
+
+    The scheduled counterpart of :func:`app.webhooks.dispatch.dispatch` — the worker cron runs it
+    frequently so delivery stays low-latency while remaining crash-safe (the event is already
+    durable; this only publishes it). Safe to run concurrently. Returns the number published.
+    """
+{% if include_rls %}
+    from app.db.session import PrivilegedSessionFactory as SessionFactory  # relay bypasses RLS
+{% else %}
+    from app.db.session import SessionFactory
+{% endif %}
+    from app.jobs.queue import enqueue
+    from app.webhooks.outbox import drain_outbox
+
+    async with SessionFactory() as session:
+        return await drain_outbox(session, enqueue_fn=enqueue)
 {% endif %}

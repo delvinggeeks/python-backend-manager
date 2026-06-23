@@ -87,8 +87,11 @@ organization_id` still can't read another tenant's rows. Postgres-only — a no-
 
 - `DATABASE_URL` → a least-privilege, **RLS-bound** role — the per-tenant request path.
 - `DATABASE_URL_PRIVILEGED` → a **`BYPASSRLS`** role for flows that legitimately span tenants:
-  API-key auth, the admin panel, inbound provider webhooks, and background workers. Leave it unset
-  in dev and both use `DATABASE_URL` (`app.tenancy.rls` has the details).
+  API-key auth, the admin panel, inbound provider webhooks, and background workers — including the
+  outbox relay, which reads every tenant's endpoints. Leave it unset in dev and both use
+  `DATABASE_URL` (`app.tenancy.rls` has the details). **In production point it at a real `BYPASSRLS`
+  role:** if it resolves to the RLS-bound role the relay reads zero endpoints and silently drops
+  every webhook (the relay has no tenant in context, so the policy hides all rows).
 
 Provision once (as the DB owner; run migrations as the owner, the app connects as these roles):
 
