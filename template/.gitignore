@@ -17,6 +17,9 @@ build/
 .env.*
 !.env.example
 
+# Local scratch (Schemathesis fuzz runner: throwaway DB + server log)
+.fuzz*
+
 # OS / editor
 .DS_Store
 .idea/

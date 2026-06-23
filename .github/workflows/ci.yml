@@ -209,6 +209,11 @@ jobs:
           uv run lint-imports
           uv run interrogate src
           uv run pytest
+          # OpenAPI fuzzing gate (Schemathesis): boot the app and assert no endpoint 5xxes
+          # under schema-aware property-based fuzzing. Self-contained — it migrates its own
+          # throwaway sqlite DB, runs in a child shell (its env never leaks here), and tears
+          # the server down on exit. Skips cleanly on a service with no business API surface.
+          bash scripts/run_fuzz.sh
           # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
           # Only db-backed services render alembic.ini (and install alembic); a db-less capability
           # (e.g. observability alone) has no migrations, so skip the round-trip there.
