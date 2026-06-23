@@ -1,9 +1,9 @@
 """Users / auth capability built on fastapi-users.
 
 Requires the `db` and `users` extras (`users` == `fastapi-users[sqlalchemy]`).
-`app.main.create_app` mounts the register / login / reset / verify / users routers
-under `/auth` and `/users`. Protect your own routes with the `current_active_user`
-dependency:
+`app.main.create_app` mounts the custom JWT auth router (login / refresh / logout /
+logout-all) plus the register / reset / verify / users routers under `/auth` and `/users`.
+Protect your own routes with the `current_active_user` dependency:
 
     from fastapi import Depends
 
@@ -14,21 +14,16 @@ dependency:
     @router.get("/me/items")
     async def my_items(user: User = Depends(current_active_user)) -> list[Item]:
         ...
+
+Sessions are hardened (P3): short access tokens + rotating refresh tokens (reuse detection),
+a best-effort Redis denylist for single-session logout, and `token_version`-based
+logout-everywhere — see `app.users.sessions` / `app.users.denylist`.
 """
 
 from __future__ import annotations
 
-import uuid
-
-from fastapi_users import FastAPIUsers
-
 from app.users.auth import auth_backend
-from app.users.manager import get_user_manager
-from app.users.models import User
+from app.users.deps import current_active_user, fastapi_users
+from app.users.router import router as auth_router
 
-fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
-
-# Dependency: requires a valid JWT belonging to an active user.
-current_active_user = fastapi_users.current_user(active=True)
-
-__all__ = ["auth_backend", "current_active_user", "fastapi_users"]
+__all__ = ["auth_backend", "auth_router", "current_active_user", "fastapi_users"]

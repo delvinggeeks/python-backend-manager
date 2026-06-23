@@ -59,12 +59,12 @@ def create_app() -> FastAPI:
 {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
     # Imported here, not at module top, so `app.main` can be imported without a
     # configured DATABASE_URL — the user-DB engine is built when the app is created.
-    from app.users import auth_backend, fastapi_users
+    from app.users import auth_router, fastapi_users
     from app.users.schemas import UserCreate, UserRead, UserUpdate
 
-    app.include_router(
-        fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"]
-    )
+    # Custom JWT router (login / refresh / logout / logout-all) — replaces fastapi-users' built-in
+    # login so a rotating refresh token is issued alongside the short-lived access token.
+    app.include_router(auth_router, prefix="/auth/jwt", tags=["auth"])
     app.include_router(
         fastapi_users.get_register_router(UserRead, UserCreate),
         prefix="/auth",
