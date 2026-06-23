@@ -244,6 +244,74 @@ jobs:
           fi
           echo "all capability legs passed"
 
+  # Supply-chain proof (ROADMAP P2c): build a real rendered image (nothing else in CI builds
+  # the Dockerfile, so this catches Dockerfile regressions), emit a CycloneDX SBOM, and scan it.
+  # Not a required check — the Trivy scan is report-only so a volatile external CVE feed can't
+  # hard-block the autonomous merge (Renovate auto-remediates vulnerable deps); the signed,
+  # published image + enforced gate ship in the GENERATED service's CI (P2c-3).
+  supply-chain:
+    name: "supply-chain (build · SBOM · scan)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0   # copier reads git history/refs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: true
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.11.x"
+
+      - name: Generate a representative project
+        run: |
+          uvx copier copy --defaults --trust --vcs-ref HEAD \
+            --data agent_framework=none --data include_api_keys=true \
+            . /tmp/generated
+
+      - name: Lock + CycloneDX SBOM (uv export)
+        working-directory: /tmp/generated
+        run: |
+          set -euo pipefail
+          uv lock
+          uv export --format cyclonedx1.5 -o sbom.cdx.json
+          python3 - <<'PY'
+          import json
+          sbom = json.load(open("sbom.cdx.json"))
+          assert sbom.get("bomFormat") == "CycloneDX", sbom.get("bomFormat")
+          print(f"SBOM OK: CycloneDX {sbom['specVersion']}, {len(sbom.get('components', []))} components")
+          PY
+
+      - name: Build the digest-pinned, reproducible image
+        working-directory: /tmp/generated
+        run: |
+          set -euo pipefail
+          git init -q && git add -A
+          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
+          # SOURCE_DATE_EPOCH (commit time) -> BuildKit rewrites layer timestamps (reproducible build).
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          docker buildx build --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            -t generated-service:ci --load .
+
+      - name: Scan the image (Trivy — surface fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: generated-service:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # exit-code 0 = report-only (see the job comment); promote to "1" + a required check
+          # once a CVE triage/waiver process exists.
+          exit-code: "0"
+
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: /tmp/generated/sbom.cdx.json
+          if-no-files-found: error
+
   release:
     name: Tag + release
     needs: [generate-and-test, generate-capability]
