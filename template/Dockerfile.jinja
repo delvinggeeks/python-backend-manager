@@ -1,6 +1,17 @@
 # syntax=docker/dockerfile:1
-FROM python:{{ python_version }}-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+{% if python_version == "3.14" %}
+{% set python_base = "python:" ~ python_version ~ "-slim@sha256:44dd04494ee8f3b538294360e7c4b3acb87c8268e4d0a4828a6500b1eff50061" %}
+{% else %}
+{% set python_base = "python:" ~ python_version ~ "-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f" %}
+{% endif %}
+# Base + uv images are DIGEST-PINNED (not just tag-pinned) so every build pulls byte-identical
+# inputs — a mutated tag can't change what ships. Renovate keeps the digests current.
+FROM {{ python_base }} AS builder
+COPY --from=ghcr.io/astral-sh/uv:0.11.23@sha256:d0a0a753ab981624b49c97abc98821c1c09f4ca69d1ef5cee69c501be3d88479 /uv /uvx /bin/
+
+# SOURCE_DATE_EPOCH (CI sets it to the commit time) lets BuildKit rewrite layer/image timestamps
+# to a fixed point, so the same source rebuilds to the same image — reproducible builds.
+ARG SOURCE_DATE_EPOCH
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app
 
@@ -12,7 +23,7 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev{% for e in sync_extras.split() %} --extra {{ e }}{% endfor %}
 
-FROM python:{{ python_version }}-slim AS runtime
+FROM {{ python_base }} AS runtime
 RUN useradd --create-home --uid 1000 app
 WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
