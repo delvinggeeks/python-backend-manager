@@ -223,7 +223,7 @@ Call sites enqueue through a thin seam and never import arq:
 ```python
 from app.jobs.queue import enqueue
 
-await enqueue("example_task", 21)   # the worker runs example_task(ctx, 21)
+await enqueue("example_task", 21)  # the worker runs example_task(ctx, 21)
 ```
 
 - **Worker:** `just worker` (runs `arq app.jobs.worker.WorkerSettings`) — needs `REDIS_URL`; run

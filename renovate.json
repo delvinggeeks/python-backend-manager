@@ -19,6 +19,16 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version:\\s*\"(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track the TEMPLATE BODY's Python deps. template/pyproject.toml.jinja is a jinja file, so no built-in manager (pep621/pip_requirements) ever parses it — every lower-bound pin in the template was invisible to Renovate, which is why the dashboard's 'Detected Dependencies' listed no pypi manager at all. Matches a PEP 508 requirement string: name, optional extras (non-capturing, so `uvicorn[standard]` yields depName `uvicorn`), then the `>=` floor. depName allows dots/hyphens (opentelemetry-instrumentation-fastapi, python-multipart); currentValue is anything up to the closing quote or a comma, so PEP 440 pre-release floors (`>=0.50b0`) and bare majors (`>=7`) are captured too. Jinja-gated lines (`{% if include_admin %}, \"itsdangerous>=2.0\"`) match like any other because each entry carries its own opening quote.",
+      "managerFilePatterns": ["/^template/pyproject\\.toml\\.jinja$/"],
+      "matchStrings": [
+        "\"(?<depName>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\\[[A-Za-z0-9,._-]+\\])?>=(?<currentValue>[0-9][^\",\\s]*)"
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
     }
   ],
   "packageRules": [
@@ -26,6 +36,24 @@
       "description": "Auto-merge every GitHub Actions + pre-commit bump (incl. majors) once the required CI checks pass — the workflow-render gate in .github/workflows/ci.yml makes green real for the template body.",
       "matchManagers": ["github-actions", "pre-commit"],
       "automerge": true
+    },
+    {
+      "description": "Supply-chain cooldown for every Python dep: never open a PR for a release less than 3 days old. Same posture as SHA-pinning our actions — a compromised or yanked PyPI release is usually caught and pulled within hours, and the template's lower-bound pins mean a bad version would propagate into every generated service's next `uv lock --upgrade`.",
+      "matchDatasources": ["pypi"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Auto-merge Python minor + patch bumps once the required checks are green — the capability matrix locks, syncs, lints, type-checks and tests a real generated project per bump, so green is real.",
+      "matchDatasources": ["pypi"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Python MAJORS are never auto-merged — a major floor bump is a breaking-change review, and it propagates to every downstream service on its next `copier update`. dependencyDashboardApproval holds the PR until a human ticks its box on the Dependency Dashboard.",
+      "matchDatasources": ["pypi"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "dependencyDashboardApproval": true
     }
   ]
 }
