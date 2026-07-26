@@ -230,12 +230,30 @@ CROSS-TENANT READ: a consumer that set no tenant context read ['a']
 because the connection still carried app.current_tenant='b2e23a62-…'
 ```
 
+| 4 | **Every route is authenticated, or explicitly public** | **policy/CI** | `tests/test_route_auth.py::test_every_route_is_authenticated_or_explicitly_public` — walks the service's own OpenAPI document; an operation with no security requirement must appear by exact `"METHOD /path"` name in the committed `PUBLIC_ROUTES` frozenset. Runs in every capability leg, since the route set varies by flag |
+| 4 | The allow-list **cannot accumulate dead entries** | **policy/CI** | `tests/test_route_auth.py::test_the_allow_list_has_no_stale_entries` — an entry naming a route the service does not expose fails the build, so `PUBLIC_ROUTES` stays a live contract rather than an append-only pre-authorization cache |
+| 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
+| — | Local validation and CI **cannot drift** | **policy/CI** | `scripts/leg-check.sh` is the single definition of "a leg passed"; `.github/workflows/ci.yml` invokes that same script with the same arguments |
+| — | Slice branches **cannot absorb unrelated changes** | **environment** (agent harness) | `.claude/hooks/staged-scope.sh`, a PreToolUse guard refusing a commit whose staged paths fall outside `.claude/slice-scope` |
+
 ### Open follow-ups
 
 - **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
   `database_url`, so in a default local environment the "privileged" session is the ordinary app
   role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
   dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
+  *Filed, not implemented.*
+- **`FU-2` · `include_in_schema=False` bypasses the route-coverage gate.** The walker reads the
+  OpenAPI document, so a route excluded from the schema is invisible to it — one keyword argument
+  disables the check for that route. Direct route-table enumeration is not a viable alternative:
+  FastAPI 0.137 wraps included routers in an internal `_IncludedRouter` that exposes no `.routes`,
+  so the real routes cannot be reached from `app.routes`. Proposed mechanical fix: an AST gate over
+  the template source asserting `include_in_schema=False` appears only at approved sites — policy/CI,
+  and independent of framework internals. *Filed, not implemented.*
+- **`FU-3` · `leg-check.sh` should refuse a dirty worktree.** `copier --vcs-ref HEAD` renders
+  uncommitted edits, so a leg-check on a dirty tree validates something the commit does not contain
+  — the same "passed locally, failed CI" class the shared script exists to eliminate. It should
+  fail fast (or require an explicit override) when `git status --porcelain` is non-empty.
   *Filed, not implemented.*
 
 ---
