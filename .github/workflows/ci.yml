@@ -212,40 +212,10 @@ jobs:
             . /tmp/generated
 
       - name: Lock, sync, lint, test + alembic round-trip
-        working-directory: /tmp/generated
-        run: |
-          set -euo pipefail
-          git init -q && git add -A
-          git -c user.email=ci@local -c user.name=ci commit -qm "ci: generated"
-          uv lock
-          uv sync ${{ matrix.extras }}
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run vulture src
-          uv run xenon --max-absolute C --max-modules C --max-average B src
-          uv run lint-imports
-          uv run interrogate src
-          # Any leg that RENDERS the cross-tenant isolation suite must RUN it: REQUIRE_DB_TESTS
-          # turns a missing Docker/testcontainers into a failure instead of a silent skip. Keyed
-          # off the rendered file, so a new rls-bearing capability row is covered automatically.
-          if [ -f tests/test_rls.py ]; then export REQUIRE_DB_TESTS=1; fi
-          uv run pytest
-          # OpenAPI fuzzing gate (Schemathesis): boot the app and assert no endpoint 5xxes
-          # under schema-aware property-based fuzzing. Self-contained — it migrates its own
-          # throwaway sqlite DB, runs in a child shell (its env never leaks here), and tears
-          # the server down on exit. Skips cleanly on a service with no business API surface.
-          bash scripts/run_fuzz.sh
-          # The migration chain must be reversible — round-trip it on a throwaway sqlite db.
-          # Only db-backed services render alembic.ini (and install alembic); a db-less capability
-          # (e.g. observability alone) has no migrations, so skip the round-trip there.
-          if [ -f alembic.ini ]; then
-            export DATABASE_URL="sqlite+aiosqlite:///$PWD/alembic_ci.sqlite3"
-            uv run alembic upgrade head
-            uv run alembic downgrade base
-          else
-            echo "no alembic.ini (db-less capability) — skipping migration round-trip"
-          fi
+        # Delegates to scripts/leg-check.sh — the SINGLE definition of "a leg passed", invoked
+        # identically here and during local validation. Two separate lists of commands drift, and
+        # the drift only surfaces as "it passed locally but CI disagrees".
+        run: bash scripts/leg-check.sh /tmp/generated ${{ matrix.extras }}
 
   # Single STABLE required status check that gates auto-merge on the whole capability
   # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
