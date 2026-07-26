@@ -254,6 +254,40 @@ jobs:
           fi
           echo "all capability legs passed"
 
+  # THE single stable required check for this whole workflow. Branch protection / the `main`
+  # ruleset requires only "ci-ok", so adding, renaming or splitting a job above never means
+  # touching repo settings again — and Renovate's platformAutomerge finally has one
+  # deterministic context to wait on instead of five names that drift with the matrix.
+  #
+  # `if: always()` + the explicit result check is deliberate, not ceremony. Without it, a
+  # failed dependency SKIPS this job, and GitHub treats a skipped required check as PASSING
+  # — auto-merge would sail straight through a red matrix. Same defensive shape as
+  # generate-capability-gate above.
+  #
+  # Deliberately NOT in `needs`:
+  #   - release      — push-to-main-only, so it is skipped on every PR (a skip would fail
+  #                    the check below and block every PR).
+  #   - supply-chain — report-only by design (see its job comment): a volatile external CVE
+  #                    feed must never hard-block the autonomous merge.
+  ci-ok:
+    name: ci-ok
+    needs: [generate-and-test, generate-capability, generate-capability-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every gating job to have succeeded
+        run: |
+          set -euo pipefail
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "gating job results: $results"
+          for result in $results; do
+            if [ "$result" != "success" ]; then
+              echo "::error::a gating job reported '$result' — ci-ok fails"
+              exit 1
+            fi
+          done
+          echo ok
+
   # Supply-chain proof (ROADMAP P2c): build a real rendered image (nothing else in CI builds
   # the Dockerfile, so this catches Dockerfile regressions), emit a CycloneDX SBOM, and scan it.
   # Not a required check — the Trivy scan is report-only so a volatile external CVE feed can't
