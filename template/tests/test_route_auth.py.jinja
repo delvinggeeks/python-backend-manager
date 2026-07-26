@@ -1,0 +1,94 @@
+"""Route-coverage gate: every route is authenticated, or explicitly and visibly public.
+
+The failure this prevents is not a bug in a route — it is a route that nobody noticed was
+reachable. Auth is easy to add and easy to forget, and a forgotten one looks exactly like a
+working endpoint. So the check is structural and runs in every generate-matrix leg (the route set
+varies by capability flags): walk the service's own OpenAPI document, and for each operation
+require either a declared security requirement or an exact-name entry in ``PUBLIC_ROUTES`` below.
+
+Adding a line to that list is the review moment. It is deliberately the only way to ship an
+unauthenticated endpoint, and it shows up in the diff as a security decision rather than as an
+omission.
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------------------------
+# THE ALLOW-LIST — every entry is an endpoint reachable with NO credentials.
+#
+# Entries are exact "METHOD /path" names matched against the OpenAPI document. Add one only when
+# the endpoint is public *by design*, and say why. "It doesn't have auth yet" is not a reason to
+# add a line here; it is a reason to add the dependency to the route.
+# ---------------------------------------------------------------------------------------------
+PUBLIC_ROUTES: frozenset[str] = frozenset(
+    {
+        # Liveness probe: consumed by orchestrators before any credential exists.
+        "GET /health",
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+        # The credential-establishing endpoints. They cannot require a credential; each carries
+        # its own abuse controls instead (auth-tier throttling + failed-login lockout).
+        "POST /auth/jwt/login",
+        "POST /auth/jwt/refresh",
+        "POST /auth/register",
+        "POST /auth/forgot-password",
+        "POST /auth/reset-password",
+        "POST /auth/request-verify-token",
+        "POST /auth/verify",
+{% endif %}
+{% if include_billing %}
+        # Provider webhook: authenticated by HMAC signature verification in the handler, not by a
+        # bearer token — the caller is a payment provider, not a user.
+        "POST /billing/webhook",
+{% endif %}
+{% if include_observability %}
+        # Kubernetes-style probes and the Prometheus scrape endpoint: consumed by infrastructure
+        # on a network path that segmentation, not application auth, is responsible for.
+        "GET /healthz",
+        "GET /readyz",
+        "GET /metrics",
+{% endif %}
+    }
+)
+
+_HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
+
+
+def _operations() -> list[tuple[str, dict]]:
+    """Every (name, operation) pair in the service's OpenAPI document."""
+    from app.main import create_app
+
+    spec = create_app().openapi()
+    found: list[tuple[str, dict]] = []
+    for path, item in spec.get("paths", {}).items():
+        for method, operation in item.items():
+            if method.lower() in _HTTP_METHODS:
+                found.append((f"{method.upper()} {path}", operation))
+    return found, bool(spec.get("security"))  # type: ignore[return-value]
+
+
+def test_every_route_is_authenticated_or_explicitly_public() -> None:
+    """An operation with no security requirement must be on the allow-list, by exact name."""
+    operations, global_security = _operations()  # type: ignore[misc]
+    assert operations, "no operations found — the walker is not seeing the app's routes"
+
+    unguarded = [
+        name
+        for name, operation in operations
+        if not (operation.get("security") or global_security) and name not in PUBLIC_ROUTES
+    ]
+    assert not unguarded, (
+        "these routes are reachable with NO credentials and are not on the PUBLIC_ROUTES "
+        f"allow-list: {sorted(unguarded)}. Either give the route an auth dependency, or add it "
+        "to PUBLIC_ROUTES with a comment saying why it is public."
+    )
+
+
+def test_the_allow_list_has_no_stale_entries() -> None:
+    """An allow-list that outlives its routes silently widens over time."""
+    operations, _ = _operations()  # type: ignore[misc]
+    present = {name for name, _ in operations}
+    stale = sorted(entry for entry in PUBLIC_ROUTES if entry not in present)
+    assert not stale, (
+        f"PUBLIC_ROUTES lists routes this service does not expose: {stale}. Remove them — a stale "
+        "allow-list quietly pre-approves a future route that happens to reuse the name."
+    )
