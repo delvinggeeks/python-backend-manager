@@ -40,12 +40,12 @@ PUBLIC_ROUTES: frozenset[str] = frozenset(
         # bearer token — the caller is a payment provider, not a user.
         "POST /billing/webhook",
 {% endif %}
-{% if include_observability %}
-        # Kubernetes-style probes and the Prometheus scrape endpoint: consumed by infrastructure
-        # on a network path that segmentation, not application auth, is responsible for.
-        "GET /healthz",
-        "GET /readyz",
-        "GET /metrics",
+{% if not (include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin) %}
+        # This render ships NO credential system at all (no users, no API keys), so there is no
+        # dependency /agent could carry. It is public because the whole service is. Enabling any
+        # auth capability removes this entry AND gives /agent a real dependency — see
+        # app/api/routes/agent.py. Do not copy this line into a service that has credentials.
+        "POST /agent",
 {% endif %}
     }
 )
@@ -92,3 +92,19 @@ def test_the_allow_list_has_no_stale_entries() -> None:
         f"PUBLIC_ROUTES lists routes this service does not expose: {stale}. Remove them — a stale "
         "allow-list quietly pre-approves a future route that happens to reuse the name."
     )
+
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+
+
+async def test_agent_endpoint_rejects_an_unauthenticated_call(client) -> None:
+    """/agent spends money per call, so it must refuse anonymous callers outright.
+
+    Asserted at the request level, not just in the contract: the document says it is guarded, and
+    this proves the guard actually rejects.
+    """
+    response = await client.post("/agent", json={"prompt": "hello"})
+    assert response.status_code == 401, (
+        f"POST /agent answered {response.status_code} without credentials — an unauthenticated "
+        "billable endpoint is a denial-of-wallet surface"
+    )
+{% endif %}
