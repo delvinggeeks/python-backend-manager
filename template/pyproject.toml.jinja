@@ -52,7 +52,7 @@ llm = [
 ]
 
 # SaaS + agentic capability extras — all non-conflicting; opt in per service.
-users = ["fastapi-users[sqlalchemy]>=14"]
+users = ["fastapi-users[sqlalchemy]>=14.0.2"]
 # Both provider SDKs ship in the extra (one is active per service via PAYMENTS_PROVIDER) so
 # Renovate tracks both regardless of which a given service selects.
 payments = ["stripe>=11", "razorpay>=2.0"]
