@@ -383,3 +383,42 @@ async def test_tenant_context_is_re_established_after_a_commit(
         current_tenant_id.reset(token)
     finally:
         await test_engine.dispose()
+
+
+def test_every_session_factory_is_tagged_with_an_rls_mode() -> None:
+    """Untagged session factories fail CI, not runtime.
+
+    The ``after_begin`` hook keys off ``info["rls_mode"]``; a factory built without it silently gets
+    no tenant context. That fails CLOSED (zero rows) rather than open — but silently, and a
+    zero-rows read is a confusing way to learn about a construction mistake. So every
+    ``async_sessionmaker(...)`` site in the service is checked structurally here instead of being
+    left to code review.
+    """
+    import ast
+    import pathlib
+
+    offenders: list[str] = []
+    for path in sorted(pathlib.Path("src/app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if name != "async_sessionmaker":
+                continue
+            tagged = any(
+                kw.arg == "info"
+                and isinstance(kw.value, ast.Dict)
+                and any(
+                    isinstance(key, ast.Constant) and key.value == "rls_mode"
+                    for key in kw.value.keys
+                )
+                for kw in node.keywords
+            )
+            if not tagged:
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert not offenders, (
+        "async_sessionmaker(...) built without info={'rls_mode': ...} — these sessions would run "
+        f"with no tenant context: {', '.join(offenders)}"
+    )

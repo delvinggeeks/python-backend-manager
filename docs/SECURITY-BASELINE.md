@@ -198,6 +198,12 @@ didn't write.
 | Restore drills executed on a schedule, with the result recorded | policy/CI |
 | A **vulnerability disclosure path** — `SECURITY.md` and `/.well-known/security.txt` | environment (served) + policy/CI |
 
+> **Audit correction (layer 12).** An earlier audit pass reported this repo as having no disclosure
+> path at all. That was too broad: `template/SECURITY.md` **does** ship into every generated service.
+> The accurate, narrower finding is that **the template repository itself has no `SECURITY.md`**, and
+> neither the template nor its generated services serve `/.well-known/security.txt`. Recorded as a
+> visible edit rather than a silent rewrite — an audit that quietly corrects itself is not auditable.
+
 *The second row is the one that compounds.* An incident that produces a document produces nothing; an
 incident that produces a failing test, a lint rule, or a denied capability cannot recur silently. This
 is the process-level statement of the doctrine in §0.
