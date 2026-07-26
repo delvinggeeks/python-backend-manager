@@ -1,0 +1,252 @@
+# SECURITY-BASELINE.md — defense in depth, and where each control must live
+
+> This repo's security reference. Platform-neutral: it names standards and positions, never a
+> consumer, a vendor, or a deployment. Inherits [PRINCIPLES.md](PRINCIPLES.md) — where a layer
+> restates a principle, it cites it rather than re-arguing it. Companion to
+> [ARCHITECTURE.md](ARCHITECTURE.md) (the seams) and [CICD-PIPELINE.md](CICD-PIPELINE.md) (the gates).
+
+---
+
+## 0. The doctrine: position, not existence
+
+A control that exists in a document and nowhere else does not exist. What makes a guardrail real is
+**where it is enforced**, and the positions are strictly ordered:
+
+```
+environment   >   policy / CI   >   middleware   >   prose
+  strongest                                          not a control
+```
+
+| Position | Meaning | Failure mode it removes |
+|---|---|---|
+| **environment** | The unsafe state is unreachable — the network path doesn't exist, the credential was never minted, the container has no write access, the role cannot see the row. | Every failure mode. Nothing to remember, nothing to bypass. |
+| **policy / CI** | The unsafe state is reachable at runtime but **cannot be merged or released**: a gate fails the build. | Regression. A human can still do it by hand in an emergency, and that is visible. |
+| **middleware** | The unsafe request is rejected at run time by code on the request path. | The request. But new code paths that bypass the middleware are not covered. |
+| **prose** | A document says to do it. | **Nothing.** |
+
+**The rule this file enforces: prose is never the enforcement layer.** A guardrail whose only home is
+a README, a docstring, or a review checklist is an *unenforced intention* and is reported as a finding
+regardless of how well it is written. Documentation explains a control; it never *is* one.
+
+Two corollaries:
+
+- **Push each control down the stack as far as it will go.** If tenant isolation can be enforced by
+  the database role rather than by remembering a `WHERE` clause, it belongs in the database. This is
+  [P6](PRINCIPLES.md) — two independent layers, not one.
+- **A control's position is part of its specification.** "We validate egress URLs" is not a
+  requirement; "every user-influenced outbound URL passes the SSRF guard, enforced by an
+  import-linter contract that fails the build" is.
+
+Each layer below lists its guardrails and the **required position**. Task-2-style audits report the
+*actual* position against this column; anything at `prose` or `absent` is a finding.
+
+---
+
+## 1. Infrastructure & host
+
+| Guardrail | Required position |
+|---|---|
+| Hardened host baseline expressed **as code**, not as a runbook | environment (IaC) |
+| Drift detection against that baseline, alerting on divergence | policy/CI |
+| Immutable patch waves — hosts replaced, never patched in place | environment |
+| Containers run **non-root**, read-only root filesystem, no capabilities beyond need | environment (image + runtime) |
+| Agent/automation execution is **sandboxed**, with an **egress allow-list** | environment |
+| Workload credentials are **short-lived and workload-scoped** (no long-lived static keys) | environment |
+
+*Rationale:* an attacker who reaches a host should find a machine that can only talk to the things
+its job requires. Egress allow-listing is the single highest-value host control for a service that
+runs model calls and outbound webhooks, because it converts "arbitrary exfiltration" into "denied by
+default".
+
+## 2. Network
+
+| Guardrail | Required position |
+|---|---|
+| TLS everywhere; **HSTS** on production responses | middleware (+ edge) |
+| Segmentation: database, cache and internal services are **never internet-routable** | environment |
+| **SSRF guard on every user-influenced outbound URL** — allow-list + private/link-local/loopback/metadata blocking, re-validated on redirect, DNS-rebinding-safe | middleware, **plus policy/CI proving no outbound path bypasses it** |
+| Rate limits at the edge as well as in the app | environment (edge) + middleware |
+
+*Cites [P6](PRINCIPLES.md): "egress is hostile."* The critical detail is the second position on the
+SSRF row: a guard that exists but is applied by hand at each call site is one forgotten call away from
+useless. The build must be able to prove no user-supplied URL reaches an HTTP client directly.
+
+## 3. Database
+
+| Guardrail | Required position |
+|---|---|
+| `FORCE ROW LEVEL SECURITY` (not merely `ENABLE`) on every tenant table | environment (DB) |
+| Tenant context set **transaction-scoped**, so a pooled connection cannot leak it to the next transaction | environment (DB) |
+| The application role **cannot bypass RLS**; a separate privileged role is used only for explicitly trusted flows | environment (DB) |
+| Statement and lock timeouts bounded | environment (DB config) |
+| Destructive migrations (drop/truncate/type-narrowing) gated by an explicit approval | policy/CI |
+| **Cross-tenant isolation tests over the real tenant tables** run in CI | policy/CI |
+| Backups immutable and held off-account; restores exercised | environment + policy/CI |
+
+*Cites [P6](PRINCIPLES.md).* Isolation belongs in the database because that is the only position that
+survives a missing `WHERE org_id=`. Transaction scoping is not a detail: with a transaction-mode
+pooler, session-scoped context is **actively dangerous** — it hands one tenant's context to the next
+tenant's transaction.
+
+## 4. Application
+
+| Guardrail | Required position |
+|---|---|
+| **Parse, don't validate** at every boundary — untrusted input becomes a typed object or is rejected | middleware (schema layer) |
+| **Route-coverage test**: every route is behind auth **or** on an explicit public allow-list | policy/CI |
+| Authorization is **roles → permissions**, never a scattering of boolean flags | middleware + policy/CI |
+| Errors are **RFC 9457 Problem Details**; no stack traces, no internal identifiers | middleware |
+| Secrets read only from the settings object (env / secret manager) — never `os.environ` in app code | policy/CI |
+| **Idempotency on mutations** | middleware |
+| **Vendor SDKs only at adapter edges** | policy/CI (import-linter) |
+
+*Cites [P1](PRINCIPLES.md) (the app imports the port, never a vendor SDK), [P5](PRINCIPLES.md)
+(idempotency), [P7](PRINCIPLES.md) (secrets).* The route-coverage test is the load-bearing one: it
+converts "we always remember to add the auth dependency" from a habit into a build failure, and it is
+the only guardrail that catches a *newly added* unauthenticated route.
+
+## 5. API platform
+
+| Guardrail | Required position |
+|---|---|
+| API keys: identifiable prefix, **hashed at rest**, per-key scopes, expiry, rotation, last-used | middleware + environment (storage) |
+| Machine-to-machine auth via **OAuth2 client-credentials**, not shared static secrets | middleware |
+| Per-key rate limits and quotas | middleware |
+| Outbound webhooks **HMAC-signed**; inbound webhooks signature-verified **and replay-protected** | middleware |
+| Contract lint + **breaking-change gate** on the published API | policy/CI |
+| CORS strict by default (no wildcard with credentials) | middleware |
+
+## 6. Served responses
+
+| Guardrail | Required position |
+|---|---|
+| Content-Security-Policy, `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy` | middleware |
+| Cookies: `Secure`, `HttpOnly`, explicit `SameSite`; CSRF posture stated and enforced for any cookie-authenticated surface | middleware |
+| **No secret in any client-served artifact**, proven by a scan | policy/CI |
+
+*A bearer-token API has little CSRF surface — but any cookie-authenticated surface (an admin panel,
+a docs portal) reintroduces it, and inherits this row in full.*
+
+## 7. AI layer
+
+| Guardrail | Required position |
+|---|---|
+| **Every model call goes through the port/gateway**, with a budget attached | policy/CI (import-linter) + middleware |
+| **Prompt-injection defense is architectural**: untrusted content is structurally separated from instructions — never concatenated into them | middleware (call construction) |
+| **Model output is untrusted input to deterministic code** — validated/parsed before it reaches anything executable | middleware |
+| Tool scopes minimized per call; no ambient authority | middleware |
+| Skills/prompts/tools are **pinned and reviewed**, never fetched-and-executed | policy/CI |
+
+*The second and third rows are the ones teams get wrong.* Prompt injection is not solved by
+instructing a model to ignore instructions; it is reduced by never placing untrusted text where
+instructions are read, and by treating everything a model emits as hostile until parsed. A model that
+can call a tool has exactly the authority of that tool — so the tool, not the prompt, is where the
+limit belongs.
+
+## 8. Build factory
+
+| Guardrail | Required position |
+|---|---|
+| Pre-tool-use hooks blocking writes to protected paths, destructive operations, and secret reads | environment (agent harness) |
+| Automation sessions sandboxed, with least-privilege tokens | environment |
+| Branch protection with **enforced** required checks, admins included | policy (repo settings) |
+| A gate job that fails — not skips — when any upstream job fails | policy/CI |
+
+*The last row exists because a skipped required check is treated as passing by branch protection: a
+naive summary job inverts into a rubber stamp exactly when the build is red.*
+
+## 9. Supply chain
+
+| Guardrail | Required position |
+|---|---|
+| GitHub Actions **SHA-pinned**; base images **digest-pinned** | policy/CI |
+| SBOM generated and retained per release | policy/CI |
+| Dependency and image vulnerability scanning | policy/CI |
+| Build provenance **signed** (keyless/OIDC) and attested | policy/CI |
+| **Secret scanning** on every commit and in CI | policy/CI |
+| **Package-existence verification** before a dependency is added (defeats hallucinated/typosquatted names) | policy/CI |
+| **Release-age cooldown** on new dependency versions, across *every* ecosystem in use | policy/CI |
+
+## 10. Identity
+
+| Guardrail | Required position |
+|---|---|
+| Platform mode: **OIDC/JWKS signature verification**; issuer, audience and claim names configured, never hard-coded | middleware |
+| MFA-capable (TOTP at minimum) for interactive identities | middleware |
+| Standalone mode: short access tokens + **rotating refresh with reuse detection** + revocation denylist | middleware |
+| Token/version invalidation on credential change ("log out everywhere") | middleware |
+
+## 11. Data governance
+
+| Guardrail | Required position |
+|---|---|
+| **PII-scrubbing log processor** — redaction happens in the logging pipeline, not at call sites | middleware |
+| Retention and deletion schedules expressed **as code** | policy/CI |
+| Caches, rate-limit buckets and idempotency records **tenant-scoped by construction** | middleware |
+| Data residency is a **deploy parameter**, not a code branch | environment |
+
+*Cites [P7](PRINCIPLES.md).* Scrubbing belongs in the processor chain for the same reason isolation
+belongs in the database: a call-site discipline fails the first time someone logs an object they
+didn't write.
+
+## 12. Process
+
+| Guardrail | Required position |
+|---|---|
+| Each module ships a **threat section** — STRIDE against its ports and its data | policy/CI (artifact required to merge) |
+| **Every incident finding lands as a mechanical guardrail**, not as a lesson-learned paragraph | policy/CI |
+| Restore drills executed on a schedule, with the result recorded | policy/CI |
+| A **vulnerability disclosure path** — `SECURITY.md` and `/.well-known/security.txt` | environment (served) + policy/CI |
+
+> **Audit correction (layer 12).** An earlier audit pass reported this repo as having no disclosure
+> path at all. That was too broad: `template/SECURITY.md` **does** ship into every generated service.
+> The accurate, narrower finding is that **the template repository itself has no `SECURITY.md`**, and
+> neither the template nor its generated services serve `/.well-known/security.txt`. Recorded as a
+> visible edit rather than a silent rewrite — an audit that quietly corrects itself is not auditable.
+
+*The second row is the one that compounds.* An incident that produces a document produces nothing; an
+incident that produces a failing test, a lint rule, or a denied capability cannot recur silently. This
+is the process-level statement of the doctrine in §0.
+
+---
+
+## 13. Enforcement status — guardrails proven in this repo
+
+A guardrail moves onto this table only when it is enforced at its required position **and** a test or
+gate demonstrates the failure it prevents. Evidence is a path, not a claim.
+
+| Layer | Guardrail | Position reached | Evidence |
+|---|---|---|---|
+| 3 | Tenant context is **transaction-scoped** — cannot be inherited by the next transaction on a pooled connection | **environment** (Postgres discards it at commit) | `db/session.py.jinja` — `set_config(…, true)` issued from an `after_begin` hook, per transaction, for both the tenant and privileged paths |
+| 3 | Privileged sessions **clear** tenant context rather than inheriting it | **environment** | same hook, `rls_mode="bypass"` branch |
+| 3 | A privileged role without `BYPASSRLS` **fails loudly** instead of returning empty results | **middleware** (fail-fast on first use) | `PrivilegedRoleMisconfigured` in `db/session.py.jinja` |
+| 3 | Cross-tenant isolation suite **cannot silently skip** in CI | **policy/CI** | `REQUIRE_DB_TESTS=1` exported by `.github/workflows/ci.yml` for any leg that renders `tests/test_rls.py`; the fixture calls `pytest.fail` rather than `pytest.skip` |
+
+**The failing test that justified the change** (`tests/test_rls.py::test_tenant_context_does_not_outlive_its_transaction`)
+demonstrated a real cross-tenant read against the previous implementation:
+
+```
+CROSS-TENANT READ: a consumer that set no tenant context read ['a']
+because the connection still carried app.current_tenant='b2e23a62-…'
+```
+
+### Open follow-ups
+
+- **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
+  `database_url`, so in a default local environment the "privileged" session is the ordinary app
+  role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
+  dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
+  *Filed, not implemented.*
+
+---
+
+## How to use this file
+
+- **Building a module:** read the layers your module touches; implement each guardrail at its required
+  position. A guardrail you implement one position weaker than required is a deliberate exception and
+  needs to be recorded as one.
+- **Auditing:** for each guardrail, establish the *actual* position with file/line or config evidence.
+  `prose` and `absent` are findings. Severity follows blast radius — cross-tenant and
+  credential-exposure findings outrank everything else.
+- **Reviewing a fix:** the question is never "is it handled?" but "**at which position**, and can it be
+  bypassed by code that doesn't know it exists?"

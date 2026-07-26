@@ -146,7 +146,8 @@ ignore = ["B008"]
 "migrations/versions/*" = ["S608"]
 # The RLS test drives migrations + the app in subprocesses (alembic on PATH; trusted inputs;
 # blocking subprocess.run is fine in a test that owns its event loop).
-"tests/test_rls*" = ["S603", "S607", "ASYNC221"]
+# S608: the isolation probes build DDL/DML from table-name literals defined in this file.
+"tests/test_rls*" = ["S603", "S607", "S608", "ASYNC221"]
 {% endif %}
 
 [tool.ruff.format]

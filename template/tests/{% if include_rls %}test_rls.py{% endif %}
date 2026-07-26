@@ -23,6 +23,12 @@ pytest.importorskip("testcontainers.postgres")
 import asyncpg
 from testcontainers.postgres import PostgresContainer
 
+# In CI (REQUIRE_DB_TESTS=1) an unstartable container is a FAILURE, not a skip: a security gate
+# that can quietly absent itself is not a gate. Locally, without the flag, it still skips so the
+# default SQLite-only run stays friction-free. (testcontainers itself is a locked dev dependency,
+# so `uv sync` always provides it; the realistic failure is the container, handled in the fixture.)
+_REQUIRE_DB_TESTS = os.getenv("REQUIRE_DB_TESTS") == "1"
+
 # The policy DDL mirrors migrations/versions/0008_rls.py (kept in sync deliberately).
 _TENANT = "NULLIF(current_setting('app.current_tenant', true), '')"
 _POLICY_DDL = (
@@ -43,6 +49,11 @@ def postgres_dsn() -> str:
     try:
         container.start()
     except Exception as exc:  # pragma: no cover - environment-dependent
+        if _REQUIRE_DB_TESTS:
+            pytest.fail(
+                f"REQUIRE_DB_TESTS=1 but Postgres could not start: {exc}. The cross-tenant "
+                "isolation suite is a required gate and must not be skipped."
+            )
         pytest.skip(f"Docker/testcontainers unavailable: {exc}")
     try:
         # testcontainers yields a SQLAlchemy/psycopg URL; asyncpg wants a plain postgres DSN.
@@ -231,3 +242,183 @@ async def test_app_end_to_end_under_dual_role(postgres_dsn: str) -> None:
     )
     assert flow.returncode == 0, f"app flow failed:\nSTDOUT {flow.stdout}\nSTDERR {flow.stderr}"
     assert "FLOW_OK" in flow.stdout, flow.stdout
+
+
+# ---------------------------------------------------------------------------------------------
+# Transaction-scoped tenant context (SECURITY-BASELINE layer 3).
+#
+# `set_config(..., false)` is SESSION-scoped: the value lives on the physical connection until it
+# is overwritten or the connection closes. Under a transaction-mode pooler (PgBouncer), a server
+# connection is handed to the NEXT client between transactions — so a value set for tenant A is
+# still set when tenant B's transaction lands on it. These two tests pin the contract that makes
+# that impossible: the context must not outlive the transaction that set it, and it must be
+# re-established for every subsequent transaction in the same request.
+# ---------------------------------------------------------------------------------------------
+
+
+def _app_engine(postgres_dsn: str, user: str, password: str):
+    """An engine whose pool is exactly ONE connection, so every checkout is the same physical
+    connection — which is precisely what a transaction-mode pooler does when it reassigns a
+    server connection to the next client. No PgBouncer needed to expose the defect."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    host_db = postgres_dsn.split("://", 1)[1].split("@", 1)[1]
+    return create_async_engine(
+        f"postgresql+asyncpg://{user}:{password}@{host_db}", pool_size=1, max_overflow=0
+    )
+
+
+async def _seed_probe(postgres_dsn: str, table: str, role: str, org: uuid.UUID) -> None:
+    owner = await asyncpg.connect(postgres_dsn)
+    try:
+        await owner.execute(
+            f"CREATE TABLE {table} (organization_id uuid NOT NULL, val text NOT NULL)"
+        )
+        await owner.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        await owner.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        await owner.execute(_POLICY_DDL.replace("rls_probe", table))
+        await owner.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{role}_pw'")
+        await owner.execute(f"GRANT SELECT, INSERT ON {table} TO {role}")
+        await owner.execute(f"INSERT INTO {table} (organization_id, val) VALUES ($1, 'a')", org)
+    finally:
+        await owner.close()
+
+
+async def test_tenant_context_does_not_outlive_its_transaction(
+    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pooled connection must carry NO tenant context into the next transaction.
+
+    Drives the real `app.db.session.get_session` dependency, then hands the same physical
+    connection to a consumer that sets no context of its own — the PgBouncer hand-off, and
+    equally the privileged/dev-fallback path that never sets a GUC.
+    """
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.db import session as session_module
+    from app.tenancy.rls import current_tenant_id
+
+    org_a = uuid.uuid4()
+    await _seed_probe(postgres_dsn, "rls_txn_probe", "txn_user", org_a)
+    test_engine = _app_engine(postgres_dsn, "txn_user", "txn_user_pw")
+    monkeypatch.setattr(session_module, "engine", test_engine)
+    # Mirror the app's own factory construction: the after_begin hook keys off `info["rls_mode"]`,
+    # so a factory built without it gets NO tenant context (fails closed — zero rows).
+    monkeypatch.setattr(
+        session_module,
+        "SessionFactory",
+        async_sessionmaker(test_engine, expire_on_commit=False, info={"rls_mode": "tenant"}),
+    )
+
+    try:
+        # --- request 1: tenant A, through the REAL request dependency -------------------------
+        token = current_tenant_id.set(str(org_a))
+        agen = session_module.get_session()
+        session = await agen.__anext__()
+        rows = (await session.execute(sa_text("SELECT val FROM rls_txn_probe"))).scalars().all()
+        assert rows == ["a"], "tenant A could not read its own row"
+        await session.commit()
+        await agen.aclose()  # session closed -> the connection returns to the pool
+        current_tenant_id.reset(token)
+
+        # --- the SAME connection, next consumer, NO tenant context of its own -----------------
+        async with test_engine.connect() as conn:
+            leaked = (
+                await conn.execute(sa_text("SELECT current_setting('app.current_tenant', true)"))
+            ).scalar()
+            visible = (await conn.execute(sa_text("SELECT val FROM rls_txn_probe"))).scalars().all()
+            # Impact first, mechanism second — the data leak is the finding; the surviving GUC
+            # is why it happens.
+            assert visible == [], (
+                f"CROSS-TENANT READ: a consumer that set no tenant context read {visible} "
+                f"because the connection still carried app.current_tenant={leaked!r}"
+            )
+            assert not leaked, (
+                "tenant context survived its transaction on a pooled connection: "
+                f"{leaked!r} — a transaction-mode pooler would hand this to the next tenant"
+            )
+    finally:
+        await test_engine.dispose()
+
+
+async def test_tenant_context_is_re_established_after_a_commit(
+    postgres_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the contract: a second transaction in the SAME request still sees its
+    tenant. Transaction-local context is discarded at commit, so the fix must re-set it per
+    transaction rather than once per session — this test fails if that regresses."""
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.db import session as session_module
+    from app.tenancy.rls import current_tenant_id
+
+    org_a = uuid.uuid4()
+    await _seed_probe(postgres_dsn, "rls_txn_probe2", "txn_user2", org_a)
+    test_engine = _app_engine(postgres_dsn, "txn_user2", "txn_user2_pw")
+    monkeypatch.setattr(session_module, "engine", test_engine)
+    # Mirror the app's own factory construction: the after_begin hook keys off `info["rls_mode"]`,
+    # so a factory built without it gets NO tenant context (fails closed — zero rows).
+    monkeypatch.setattr(
+        session_module,
+        "SessionFactory",
+        async_sessionmaker(test_engine, expire_on_commit=False, info={"rls_mode": "tenant"}),
+    )
+
+    try:
+        token = current_tenant_id.set(str(org_a))
+        agen = session_module.get_session()
+        session = await agen.__anext__()
+        first = (await session.execute(sa_text("SELECT val FROM rls_txn_probe2"))).scalars().all()
+        assert first == ["a"], "tenant A could not read its own row in the first transaction"
+        await session.commit()  # transaction-local context is discarded here
+
+        second = (await session.execute(sa_text("SELECT val FROM rls_txn_probe2"))).scalars().all()
+        assert second == ["a"], (
+            "tenant context was NOT re-established for the second transaction of the same "
+            "request — the caller silently sees zero rows"
+        )
+        await agen.aclose()
+        current_tenant_id.reset(token)
+    finally:
+        await test_engine.dispose()
+
+
+def test_every_session_factory_is_tagged_with_an_rls_mode() -> None:
+    """Untagged session factories fail CI, not runtime.
+
+    The ``after_begin`` hook keys off ``info["rls_mode"]``; a factory built without it silently gets
+    no tenant context. That fails CLOSED (zero rows) rather than open — but silently, and a
+    zero-rows read is a confusing way to learn about a construction mistake. So every
+    ``async_sessionmaker(...)`` site in the service is checked structurally here instead of being
+    left to code review.
+    """
+    import ast
+    import pathlib
+
+    offenders: list[str] = []
+    for path in sorted(pathlib.Path("src/app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if name != "async_sessionmaker":
+                continue
+            tagged = any(
+                kw.arg == "info"
+                and isinstance(kw.value, ast.Dict)
+                and any(
+                    isinstance(key, ast.Constant) and key.value == "rls_mode"
+                    for key in kw.value.keys
+                )
+                for kw in node.keywords
+            )
+            if not tagged:
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert not offenders, (
+        "async_sessionmaker(...) built without info={'rls_mode': ...} — these sessions would run "
+        f"with no tenant context: {', '.join(offenders)}"
+    )

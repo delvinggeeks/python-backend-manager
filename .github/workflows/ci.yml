@@ -226,6 +226,10 @@ jobs:
           uv run xenon --max-absolute C --max-modules C --max-average B src
           uv run lint-imports
           uv run interrogate src
+          # Any leg that RENDERS the cross-tenant isolation suite must RUN it: REQUIRE_DB_TESTS
+          # turns a missing Docker/testcontainers into a failure instead of a silent skip. Keyed
+          # off the rendered file, so a new rls-bearing capability row is covered automatically.
+          if [ -f tests/test_rls.py ]; then export REQUIRE_DB_TESTS=1; fi
           uv run pytest
           # OpenAPI fuzzing gate (Schemathesis): boot the app and assert no endpoint 5xxes
           # under schema-aware property-based fuzzing. Self-contained — it migrates its own
