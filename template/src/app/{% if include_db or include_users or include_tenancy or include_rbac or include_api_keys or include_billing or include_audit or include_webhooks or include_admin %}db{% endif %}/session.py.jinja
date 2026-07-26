@@ -9,13 +9,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 {% if include_rls %}
-from sqlalchemy import text
+from sqlalchemy import event, text
 {% endif %}
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+{% if include_rls %}
+from sqlalchemy.orm import Session
+{% endif %}
 
 from app.core.config import get_settings
 {% if include_rls %}
@@ -31,7 +34,12 @@ if not _settings.database_url:
 # sets the `app.current_tenant` GUC so Row-Level Security scopes every query to the caller's org.
 {% endif %}
 engine = create_async_engine(_settings.database_url, pool_pre_ping=True)
+{% if include_rls %}
+# `info` tags which RLS discipline a session follows; the after_begin hook below reads it.
+SessionFactory = async_sessionmaker(engine, expire_on_commit=False, info={"rls_mode": "tenant"})
+{% else %}
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+{% endif %}
 {% if include_rls %}
 
 # Trusted connection for cross-tenant flows that legitimately have no single tenant context —
@@ -43,34 +51,72 @@ SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 privileged_engine = create_async_engine(
     _settings.database_url_privileged or _settings.database_url, pool_pre_ping=True
 )
-PrivilegedSessionFactory = async_sessionmaker(privileged_engine, expire_on_commit=False)
+PrivilegedSessionFactory = async_sessionmaker(
+    privileged_engine, expire_on_commit=False, info={"rls_mode": "bypass"}
+)
 
 
-async def _set_tenant_guc(session: AsyncSession) -> None:
-    """Set the per-session RLS tenant GUC from the request context (Postgres-only; no-op on SQLite).
+class PrivilegedRoleMisconfigured(RuntimeError):
+    """DATABASE_URL_PRIVILEGED connects as a role that does NOT bypass RLS.
 
-    Called at the start of every `get_session`, before any query runs — so a value left on a
-    pooled connection by a prior request is always overwritten first, and a request with no org
-    path gets the empty string (the policies then match no rows: a safe default).
+    Raised loudly rather than degrading: a non-BYPASSRLS privileged role makes every trusted
+    cross-tenant flow (API-key auth, admin, inbound webhooks, workers) silently return zero rows,
+    which reads as "the record vanished" instead of "the deployment is misconfigured".
     """
-    if engine.dialect.name != "postgresql":
+
+
+_SET_TENANT = text("SELECT set_config('app.current_tenant', :tenant, true)")
+_ROLE_BYPASSES_RLS = text(
+    "SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user"
+)
+# Checked once per process on first privileged use — it is a deployment property, not a per-request
+# one, so paying for it on every request would be waste.
+_privileged_role_verified = False
+
+
+@event.listens_for(Session, "after_begin")
+def _apply_tenant_context(session: Session, transaction: object, connection: object) -> None:
+    """Set the RLS tenant GUC at the start of EVERY transaction, transaction-locally.
+
+    The third argument to ``set_config`` is ``true`` — *local* — so Postgres discards the value when
+    the transaction ends. That is the whole guardrail: a session-scoped value lives on the physical
+    connection, and a transaction-mode pooler (PgBouncer) hands that connection to the next client
+    with the previous tenant's context still set. Transaction-local context cannot be inherited,
+    and re-applying it per transaction means a request that commits mid-flight keeps working.
+
+    A privileged session explicitly CLEARS the context instead of inheriting whatever the
+    connection last carried; it relies on its role's BYPASSRLS, verified in
+    :func:`get_privileged_session`.
+    """
+    if connection.dialect.name != "postgresql":  # type: ignore[attr-defined]
         return
-    tenant = current_tenant_id.get() or ""
-    await session.execute(
-        text("SELECT set_config('app.current_tenant', :tenant, false)"), {"tenant": tenant}
-    )
+    mode = session.info.get("rls_mode")
+    if mode is None:
+        return
+    tenant = "" if mode == "bypass" else (current_tenant_id.get() or "")
+    connection.execute(_SET_TENANT, {"tenant": tenant})  # type: ignore[attr-defined]
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """Per-tenant (RLS-scoped) DB session. Sets `app.current_tenant` before yielding."""
+    """Per-tenant (RLS-scoped) DB session; `app.current_tenant` is set per transaction."""
     async with SessionFactory() as session:
-        await _set_tenant_guc(session)
         yield session
 
 
 async def get_privileged_session() -> AsyncIterator[AsyncSession]:
     """Trusted session that BYPASSES RLS — for cross-tenant auth/admin/webhook/worker flows."""
+    global _privileged_role_verified
     async with PrivilegedSessionFactory() as session:
+        if not _privileged_role_verified and privileged_engine.dialect.name == "postgresql":
+            bypasses = (await session.execute(_ROLE_BYPASSES_RLS)).scalar()
+            if not bypasses:
+                raise PrivilegedRoleMisconfigured(
+                    "The privileged database role does not have BYPASSRLS. Set "
+                    "DATABASE_URL_PRIVILEGED to a role created with BYPASSRLS (or a superuser); "
+                    "it currently falls back to DATABASE_URL, so trusted cross-tenant flows would "
+                    "return zero rows instead of failing."
+                )
+            _privileged_role_verified = True
         yield session
 {% else %}
 
