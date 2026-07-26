@@ -92,8 +92,8 @@ def test_the_allow_list_has_no_stale_entries() -> None:
         f"PUBLIC_ROUTES lists routes this service does not expose: {stale}. Remove them — a stale "
         "allow-list quietly pre-approves a future route that happens to reuse the name."
     )
-
 {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+
 
 async def test_agent_endpoint_rejects_an_unauthenticated_call(client) -> None:
     """/agent spends money per call, so it must refuse anonymous callers outright.
