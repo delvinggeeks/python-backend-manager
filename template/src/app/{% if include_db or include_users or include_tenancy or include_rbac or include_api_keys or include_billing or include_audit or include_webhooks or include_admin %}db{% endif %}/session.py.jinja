@@ -83,7 +83,7 @@ log = get_logger(__name__)
 
 
 @event.listens_for(Session, "after_begin")
-def _apply_tenant_context(session: Session, transaction: object, connection: object) -> None:
+def _apply_tenant_context(session: Session, _transaction: object, connection: object) -> None:
     """Set the RLS tenant GUC at the start of EVERY transaction, transaction-locally.
 
     The third argument to ``set_config`` is ``true`` — *local* — so Postgres discards the value when
