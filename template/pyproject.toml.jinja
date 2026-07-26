@@ -61,7 +61,15 @@ payments = ["stripe>=11", "razorpay>=2.0"]
 email = ["aioboto3>=14", "aiosmtplib>=3.0", "jinja2>=3.1"]
 storage = ["aioboto3>=14"]
 admin = ["sqladmin>=0.20"{% if include_admin %}, "itsdangerous>=2.0"{% endif %}]
+{% if include_ratelimit %}
+# The limiter talks to Redis directly (one atomic Lua token-bucket — see app/ratelimit/limiter.py),
+# so this extra is just Redis. ADR-11 records why fastapi-limiter is not used: it is fixed-window
+# (boundary burst) and its INCR/EXPIRE pair is not atomic. Kept below for services without the
+# capability, so their render stays byte-identical.
+ratelimit = ["redis[hiredis]>=5.2"]
+{% else %}
 ratelimit = ["fastapi-limiter>=0.1.6"]
+{% endif %}
 scheduler = ["apscheduler>=3.11"]
 api = ["fastapi-pagination>=0.12", "python-slugify>=8"]
 rag = ["pypdf>=5", "qdrant-client>=1.12", "semantic-text-splitter>=0.20"]

@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+{% if include_ratelimit %}
+from fastapi import APIRouter, Depends, HTTPException, status
+{% else %}
 from fastapi import APIRouter, HTTPException, status
+{% endif %}
 
 from app.agents.example_agent import AgentUnavailableError, run_agent
+{% if include_ratelimit %}
+from app.ratelimit import rate_limit
+{% endif %}
 from app.schemas.common import AgentRequest, AgentResponse
 
 router = APIRouter()
 
 
+{% if include_ratelimit %}
+# The expensive endpoint is the one worth protecting: an LLM call costs real money per request, so
+# it carries the caller's plan budget (per-org when org-scoped, else per client IP). Fail-open — a
+# Redis outage never turns into a 429.
+@router.post("", response_model=AgentResponse, dependencies=[Depends(rate_limit())])
+{% else %}
 @router.post("", response_model=AgentResponse)
+{% endif %}
 async def run(req: AgentRequest) -> AgentResponse:
     """Run the configured agent on the prompt; 503 when no backend is available."""
     try:

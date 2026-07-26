@@ -132,12 +132,29 @@ Format — **Default** · *Alternatives (cost / license)* · **Why** · **Swap p
 - **Swap path:** `NotificationPort` per-channel adapters; Novu orchestrator adapter at >50k notifs/mo.
 
 ## ADR-11 — Rate limiting & quotas
-- **Default:** **Redis token-bucket via `fastapi-limiter`** (already available) behind a
-  **`RateLimitPort`**, keyed `tenant:plan:endpoint`; quota counters in Postgres tied to entitlements.
+- **Default:** **Redis token-bucket** behind a **`RateLimitPort`**, keyed `tenant:plan:endpoint`.
 - **Alternatives:** SlowAPI (single-node), API gateway (APISIX/Envoy — $2-5k/mo managed + ops).
 - **Cost:** ≈ ₹0 (Redis present).
 - **Why:** distributed, plan-tiered, no new infra; gateways are premature.
 - **Swap path:** `RateLimitPort` → gateway adapter if edge enforcement is needed later.
+- **AMENDED at P8 (v0.35.0) — `fastapi-limiter` dropped; the bucket is our own Lua script.** The
+  original ADR named `fastapi-limiter` as the implementation. Building it surfaced two defects that
+  disqualify it under the production-scale rule (real code that scales, atomic primitives — not a
+  prove-it version):
+  1. it is **fixed-window**, not a token bucket, so a caller gets `2 × limit` across a window
+     boundary — the classic burst that makes a "60/min" limit briefly a "120/min" limit;
+  2. its counter is an **`INCR` + `EXPIRE` pair**, not atomic — interleaving can leave a key with no
+     TTL (a permanently-stuck limit), and it read-modify-writes under concurrency.
+  The adapter therefore evaluates a **token bucket as a single Lua script** (`EVALSHA`): one atomic
+  round-trip per decision, correct across any number of app instances, timed by the **Redis server
+  clock** (`TIME`) so hosts cannot disagree under clock skew, with idle buckets expiring so key
+  growth stays bounded. Cost is unchanged (≈ ₹0, Redis already present) and the port is unchanged,
+  so the gateway swap path still holds. The `ratelimit` extra is consequently just `redis[hiredis]`.
+- **Quotas — scope split, deliberate.** This phase ships the *protection* half (per-tenant, plan-tiered
+  request budgets). Durable per-org usage accounting and anything billable stays in **P7 `metering`**,
+  which already owns usage events, rating and invoicing; a second Postgres counter table here would be
+  a duplicate source of truth for the same numbers. Plan tiers are protection ceilings, not entitlements
+  to sell against.
 
 ## ADR-12 — Feature flags
 - **Default:** **`FeatureFlagPort` + a Postgres flag table** (zero new infra) as the default adapter.

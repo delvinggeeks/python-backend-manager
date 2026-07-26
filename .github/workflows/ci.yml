@@ -169,6 +169,14 @@ jobs:
           # Subscription, exercising the metering↔billing seam.
           - { capability: metering,      data: "--data include_metering=true --data include_tenancy=true", extras: "--extra db --extra users" }
           - { capability: metering_full, data: "--data include_metering=true --data include_billing=true --data include_audit=true --data include_rbac=true", extras: "--extra db --extra users --extra payments" }
+          # Rate limiting is db-independent (Redis only). The ALONE row runs it at minimal deps with
+          # NO db and NO Redis reachable — which is the point: the DoD requires the whole subsystem
+          # to degrade OPEN, so this leg proves a service with a dead/absent limiter still serves.
+          # The _full row adds billing (and its tenancy/users), so the plan->tier lookup, the
+          # in-process plan cache and the login-throttle + failed-login-lockout wiring all compile
+          # and are exercised against the seam.
+          - { capability: ratelimit,      data: "--data include_ratelimit=true --data include_db=false --data include_cache=true", extras: "--extra cache" }
+          - { capability: ratelimit_full, data: "--data include_ratelimit=true --data include_billing=true", extras: "--extra db --extra users --extra payments --extra cache" }
           # Observability is capability-independent. The base row runs it ALONE at minimal deps
           # (no db/users/jobs) so any dependency leak surfaces (the OTel SDK + Prometheus + Sentry
           # install and import, /healthz + /readyz + /metrics serve, setup no-ops with no OTLP

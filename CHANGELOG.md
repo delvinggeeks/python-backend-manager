@@ -4,9 +4,34 @@ All notable template changes are documented here. Projects pull these via
 `copier update`. Versions are git tags (PEP 440), cut automatically on merge to main.
 
 ## Unreleased
-Dependency-automation fixes, mostly on the template's **management surface** (root
-`renovate.json` + root CI), plus the one-line template fix that was red-lighting the whole
-capability matrix.
+### P8 — per-tenant rate limiting & auth-abuse protection (`include_ratelimit`)
+An `app/ratelimit` package behind a `RateLimitPort`, off by default; a service without the toggle
+renders byte-for-byte unchanged.
+
+- **Atomic Redis token bucket.** One Lua script per decision (`EVALSHA`), so it is correct under
+  concurrency across every app instance, has no fixed-window boundary burst (the `2 × limit` a
+  fixed window leaks), and no `INCR`/`EXPIRE` race that can strand a key with no TTL. Timed by the
+  **Redis server clock** so hosts can't disagree under skew; idle buckets expire, bounding keys.
+  This replaces `fastapi-limiter` — ADR-11 records why, and the `ratelimit` extra is now just
+  `redis[hiredis]`.
+- **Per-tenant, plan-tiered.** `rate_limit()` keys on the organization for org-scoped routes and the
+  client IP otherwise, against the route TEMPLATE (bounded key cardinality, not one key per URL).
+  With billing on, the budget is the org's plan tier, resolved from its active subscription and
+  cached in-process so the hot path stays off Postgres. Over budget → `429` + `Retry-After`.
+- **Auth-abuse protection.** Login / refresh carry a tighter per-client throttle, and consecutive
+  failed logins lock the identity out — checked *before* the password is verified, so a locked
+  identity costs no argon2 hash. Identities are hashed before they reach Redis (no emails in keys).
+  The docstring states the targeted-lockout DoS trade-off explicitly rather than hiding it.
+- **Fails OPEN everywhere.** No `REDIS_URL`, an unreachable Redis, or any error allows the request;
+  a limiter outage must never become a service outage. 250 ms socket timeouts keep a slow Redis off
+  the hot path. `RATELIMIT_ENABLED=false` is a full kill switch.
+- Enforced by an import-linter contract: app code cannot import the concrete limiter, only the port.
+- CI: `ratelimit` (ALONE, no db, no reachable Redis — the degradation path) and `ratelimit_full`
+  (+ billing/tenancy/users — plan lookup and the auth wiring).
+
+### Dependency automation
+Fixes on the template's **management surface** (root `renovate.json` + root CI), plus the one-line
+template fix that was red-lighting the whole capability matrix.
 
 - **`ruff format` on the generated README.** ruff 0.16 — which the template's `ruff>=0.15`
   floor now resolves to — formats Python code blocks inside Markdown. The arq snippet in the

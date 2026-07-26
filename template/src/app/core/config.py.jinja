@@ -60,6 +60,27 @@ class Settings(BaseSettings):
     # and a response larger than this isn't cached — bounds middleware memory. Default 1 MiB.
     idempotency_max_body_bytes: int = 1048576
 {% endif %}
+{% if include_ratelimit %}
+
+    # --- Rate limiting & auth-abuse protection (needs the `cache` extra + REDIS_URL to enforce) ---
+    #     Every limit FAILS OPEN: without Redis nothing is rejected, so a limiter outage degrades to
+    #     "no limiting" rather than an outage. Set RATELIMIT_ENABLED=false to disable enforcement
+    #     entirely (e.g. when an edge gateway already limits).
+    ratelimit_enabled: bool = True
+    # The fallback tier for anonymous / no-plan callers, and the ceiling a plan tier is looked up
+    # against. Per-plan budgets live in `app.ratelimit.tiers`.
+    ratelimit_default_limit: int = 60
+    ratelimit_default_window_seconds: int = 60
+    # Auth endpoints (login / refresh) get a tighter per-client cap — credential-stuffing defense.
+    ratelimit_auth_limit: int = 10
+    ratelimit_auth_window_seconds: int = 60
+    # Lock an identity out after this many CONSECUTIVE failed logins, for this long (brute force).
+    ratelimit_lockout_threshold: int = 5
+    ratelimit_lockout_window_seconds: int = 900
+    # How long a resolved org->plan lookup is cached in-process. Rate tiers tolerate this much
+    # staleness after a plan change; it keeps the hot path off Postgres. 0 disables the cache.
+    ratelimit_plan_cache_seconds: int = 60
+{% endif %}
 
     # --- LLM providers (only used if `llm` / an agent extra is installed) ---
     anthropic_api_key: str | None = None

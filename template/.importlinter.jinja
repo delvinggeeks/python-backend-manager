@@ -30,6 +30,21 @@ forbidden_modules =
     app.billing.adapters
 allow_indirect_imports = true
 {% endif %}
+{% if include_ratelimit %}
+
+[importlinter:contract:ratelimit-port-only]
+name = app code must not import the concrete limiter (go through the app.ratelimit facade/port)
+type = forbidden
+source_modules =
+    app.api
+    app.main
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+    app.users
+{% endif %}
+forbidden_modules =
+    app.ratelimit.limiter
+allow_indirect_imports = true
+{% endif %}
 {% if include_email %}
 
 [importlinter:contract:email-port-only]
