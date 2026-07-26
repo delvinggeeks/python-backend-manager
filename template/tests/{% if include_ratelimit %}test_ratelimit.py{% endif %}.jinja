@@ -1,0 +1,425 @@
+"""Rate limiting & auth-abuse protection — fail-open, plan tiering, key scoping, the 429 path.
+
+Runs with NO Redis (and, in one case, a deliberately DEAD Redis), which is the important case: the
+whole subsystem must degrade OPEN, so a limiter outage allows traffic instead of rejecting it. The
+enforcement paths are exercised against in-memory fakes injected at the ``RateLimitPort`` seam, so
+the tests are deterministic and need no infrastructure.
+"""
+
+from __future__ import annotations
+
+{% if include_billing %}
+import time
+import uuid
+
+{% endif %}
+import pytest
+from fastapi import Depends, FastAPI
+from httpx import ASGITransport, AsyncClient
+
+{% if include_billing %}
+from app.billing.models import Subscription
+{% endif %}
+from app.core.config import get_settings
+{% if include_billing %}
+from app.db.models import Base
+from app.db.session import SessionFactory, engine
+{% elif include_users or include_tenancy or include_rbac or include_api_keys or include_webhooks or include_admin %}
+from app.db.models import Base
+from app.db.session import engine
+{% endif %}
+from app.ratelimit import dependencies as rl
+from app.ratelimit import limiter as limiter_module
+from app.ratelimit.limiter import RedisRateLimiter
+from app.ratelimit.port import RateLimitPort
+from app.ratelimit.tiers import PLAN_TIERS, auth_tier, default_tier, tier_for_plan
+{% if include_billing %}
+from app.tenancy.models import Organization
+{% endif %}
+
+# A port-shaped fake. Every test that exercises ENFORCEMENT injects one of these at the seam, so no
+# test depends on a live Redis (and none can pass for the wrong reason because a dev box has one).
+
+
+class _DenyAll:
+    """Rejects every request; the counters report nothing."""
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        return False
+
+    async def count_failure(self, key: str, *, window_seconds: int) -> int:
+        return 0
+
+    async def failure_count(self, key: str) -> int:
+        return 0
+
+    async def clear_failures(self, key: str) -> None:
+        return None
+
+
+class _Recorder:
+    """Allows everything, but records the keys and budgets it was asked about."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, int]] = []
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        self.calls.append((key, limit, window_seconds))
+        return True
+
+    async def count_failure(self, key: str, *, window_seconds: int) -> int:
+        return 0
+
+    async def failure_count(self, key: str) -> int:
+        return 0
+
+    async def clear_failures(self, key: str) -> None:
+        return None
+
+
+class _MemoryLimiter:
+    """In-memory counters with the real semantics — used for the auth-lockout wiring."""
+
+    def __init__(self) -> None:
+        self.failures: dict[str, int] = {}
+        self.allow = True
+
+    async def hit(self, key: str, *, limit: int, window_seconds: int) -> bool:
+        return self.allow
+
+    async def count_failure(self, key: str, *, window_seconds: int) -> int:
+        self.failures[key] = self.failures.get(key, 0) + 1
+        return self.failures[key]
+
+    async def failure_count(self, key: str) -> int:
+        return self.failures.get(key, 0)
+
+    async def clear_failures(self, key: str) -> None:
+        self.failures.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_limiter_state():
+    """Drop the cached Redis client + settings so each test controls REDIS_URL on its own."""
+    limiter_module._client = None
+    get_settings.cache_clear()
+{% if include_billing %}
+    rl._PLAN_CACHE.clear()
+{% endif %}
+    yield
+    limiter_module._client = None
+    get_settings.cache_clear()
+{% if include_billing %}
+    rl._PLAN_CACHE.clear()
+{% endif %}
+
+
+# The literal route-template placeholder, assembled at runtime so the braces never appear as a
+# brace pair in this file (it is rendered by the template engine before it is ever a test).
+_ORG_PARAM = "{" + "org_id" + "}"
+
+
+def _org_scoped_client() -> tuple[FastAPI, ASGITransport]:
+    """A throwaway app with an ORG-SCOPED route carrying the dependency (key-shape asserts)."""
+    app = FastAPI()
+
+    @app.get("/orgs/{org_id}/thing", dependencies=[Depends(rl.rate_limit())])
+    async def _thing(org_id: str) -> dict[str, bool]:
+        return {"ok": True}
+
+    return app, ASGITransport(app=app)
+
+
+def test_redis_adapter_satisfies_the_port() -> None:
+    """The default adapter must actually implement RateLimitPort (the swap contract)."""
+    assert isinstance(RedisRateLimiter(), RateLimitPort)
+
+
+# --------------------------------------------------------------------------------------
+# Fail-open — the property the whole subsystem is built around.
+# --------------------------------------------------------------------------------------
+
+
+async def test_fails_open_when_no_redis_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No REDIS_URL → every call allows, and the counters report 'nothing known'."""
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    get_settings.cache_clear()
+    limiter = RedisRateLimiter()
+
+    # A budget of ONE would reject the second call if anything were actually enforcing.
+    assert await limiter.hit("k", limit=1, window_seconds=60) is True
+    assert await limiter.hit("k", limit=1, window_seconds=60) is True
+    assert await limiter.failure_count("id") == 0
+    assert await limiter.count_failure("id", window_seconds=60) == 0
+    await limiter.clear_failures("id")  # must not raise
+
+
+async def test_fails_open_when_redis_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A configured but DEAD Redis must allow traffic, not reject it (the outage path)."""
+    # Port 6399 is deliberately not a Redis. The adapter's tight socket timeouts make this fast.
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")
+    get_settings.cache_clear()
+    limiter_module._client = None
+    limiter = RedisRateLimiter()
+
+    for _ in range(3):
+        assert await limiter.hit("k", limit=1, window_seconds=60) is True
+    assert await limiter.failure_count("id") == 0
+
+
+# --------------------------------------------------------------------------------------
+# Plan tiering.
+# --------------------------------------------------------------------------------------
+
+
+def test_plan_tiers_map_to_budgets() -> None:
+    assert tier_for_plan("pro") == PLAN_TIERS["pro"]
+    assert tier_for_plan("enterprise").limit > tier_for_plan("pro").limit
+    assert tier_for_plan("pro").limit > tier_for_plan("free").limit
+
+
+def test_unknown_and_absent_plans_fall_back_to_the_default_tier() -> None:
+    assert tier_for_plan("no-such-plan") == default_tier()
+    assert tier_for_plan(None) == default_tier()
+
+
+def test_auth_tier_is_tighter_than_the_default_tier() -> None:
+    """Login/refresh must be capped harder than ordinary traffic — credential-stuffing defense."""
+    assert auth_tier().limit < default_tier().limit
+
+
+# --------------------------------------------------------------------------------------
+# Enforcement: the 429 path, key scoping, and the kill switch.
+# --------------------------------------------------------------------------------------
+
+
+async def test_over_budget_returns_429_with_retry_after(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rl, "_limiter", _DenyAll())
+    response = await client.post("/agent", json={"prompt": "hello"})
+    assert response.status_code == 429, response.text
+    assert response.headers["Retry-After"] == str(default_tier().window_seconds)
+
+
+async def test_key_is_scoped_by_client_and_route_template(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off-org traffic keys on the client IP + the ROUTE TEMPLATE (bounded key cardinality)."""
+    recorder = _Recorder()
+    monkeypatch.setattr(rl, "_limiter", recorder)
+
+    await client.post("/agent", json={"prompt": "hello"})
+
+    assert len(recorder.calls) == 1
+    key, limit, window = recorder.calls[0]
+    assert key.startswith("ip:")
+    assert key.endswith("/agent")
+    assert (limit, window) == (default_tier().limit, default_tier().window_seconds)
+
+
+async def test_disabled_setting_skips_enforcement_entirely(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RATELIMIT_ENABLED=false is a real kill switch, even with a deny-all limiter behind it."""
+    monkeypatch.setenv("RATELIMIT_ENABLED", "false")
+    get_settings.cache_clear()
+    monkeypatch.setattr(rl, "_limiter", _DenyAll())
+
+    response = await client.post("/agent", json={"prompt": "hello"})
+    assert response.status_code != 429, response.text
+
+
+async def test_org_scoped_requests_key_on_the_org_not_the_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An org-scoped route buckets per ORGANIZATION, and the key holds the route TEMPLATE."""
+    recorder = _Recorder()
+    monkeypatch.setattr(rl, "_limiter", recorder)
+    org_id = "8f14e45f-ceea-467a-9cc0-1f2c4a0b1e77"
+    _app, transport = _org_scoped_client()
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get(f"/orgs/{org_id}/thing")
+    assert response.status_code == 200, response.text
+
+    key, _limit, _window = recorder.calls[0]
+    # Bucketed by org, and the concrete id is substituted OUT of the route part, so a million orgs
+    # produce one key per route rather than a million keys per route.
+    assert key == "org:" + org_id + ":/orgs/" + _ORG_PARAM + "/thing"
+{% if include_billing %}
+
+
+async def test_plan_tier_selects_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The org's ACTIVE plan picks the budget — the DoD's "plan tiers map to limits"."""
+    recorder = _Recorder()
+    monkeypatch.setattr(rl, "_limiter", recorder)
+    org_id = "2b1f3c44-0d5e-4a7b-9c81-6e2d5a4f3b90"
+    rl._PLAN_CACHE[org_id] = ("pro", time.monotonic() + 300)
+    _app, transport = _org_scoped_client()
+
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        await ac.get(f"/orgs/{org_id}/thing")
+
+    _key, limit, window = recorder.calls[0]
+    assert (limit, window) == (PLAN_TIERS["pro"].limit, PLAN_TIERS["pro"].window_seconds)
+    assert limit != default_tier().limit  # proves the plan, not the fallback, chose it
+
+
+async def test_plan_is_read_from_the_database_and_then_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cache MISS resolves the plan from the subscriptions table, then serves from cache."""
+    org_id = uuid.uuid4()
+    async with SessionFactory() as session:
+        session.add(Organization(id=org_id, name="Acme", slug=f"acme-{org_id.hex[:8]}"))
+        session.add(
+            Subscription(
+                organization_id=org_id,
+                provider="stripe",
+                provider_subscription_id=f"sub_{org_id.hex[:12]}",
+                status="active",
+                plan="enterprise",
+            )
+        )
+        await session.commit()
+
+    assert await rl._plan_for_org(str(org_id)) == "enterprise"
+    assert rl._PLAN_CACHE[str(org_id)][0] == "enterprise"  # miss populated the cache
+
+
+async def test_an_inactive_subscription_falls_back_to_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canceled/past_due subscription must NOT keep its paid budget."""
+    org_id = uuid.uuid4()
+    async with SessionFactory() as session:
+        session.add(Organization(id=org_id, name="Lapsed", slug=f"lapsed-{org_id.hex[:8]}"))
+        session.add(
+            Subscription(
+                organization_id=org_id,
+                provider="stripe",
+                provider_subscription_id=f"sub_{org_id.hex[:12]}",
+                status="canceled",
+                plan="enterprise",
+            )
+        )
+        await session.commit()
+
+    assert await rl._plan_for_org(str(org_id)) == "free"
+
+
+async def test_a_malformed_org_id_falls_back_to_the_default_tier() -> None:
+    """A non-UUID path value must not raise — it degrades to the default tier."""
+    assert await rl._plan_for_org("not-a-uuid") is None
+{% endif %}
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+
+
+# --------------------------------------------------------------------------------------
+# Auth-abuse protection (needs the users capability) — the DoD's login/refresh defense.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+async def _schema() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+_EMAIL = "throttled@example.com"
+_PASSWORD = "s3cret-passw0rd"
+
+
+async def _register(client: AsyncClient) -> None:
+    response = await client.post("/auth/register", json={"email": _EMAIL, "password": _PASSWORD})
+    assert response.status_code == 201, response.text
+
+
+async def test_repeated_failed_logins_lock_the_identity_out(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Consecutive bad passwords lock the identity; the lockout answers 429, not 400."""
+    fake = _MemoryLimiter()
+    monkeypatch.setattr(rl, "_limiter", fake)
+    await _register(client)
+    threshold = get_settings().ratelimit_lockout_threshold
+
+    for _ in range(threshold):
+        response = await client.post(
+            "/auth/jwt/login", data={"username": _EMAIL, "password": "wrong-password"}
+        )
+        assert response.status_code == 400, response.text
+
+    # Threshold reached: the next attempt is refused BEFORE the password is even checked, so even
+    # the correct password gets 429 during the cooldown.
+    response = await client.post(
+        "/auth/jwt/login", data={"username": _EMAIL, "password": _PASSWORD}
+    )
+    assert response.status_code == 429, response.text
+    assert response.headers["Retry-After"] == str(get_settings().ratelimit_lockout_window_seconds)
+
+
+async def test_successful_login_clears_the_failure_counter(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _MemoryLimiter()
+    monkeypatch.setattr(rl, "_limiter", fake)
+    await _register(client)
+
+    response = await client.post(
+        "/auth/jwt/login", data={"username": _EMAIL, "password": "wrong-password"}
+    )
+    assert response.status_code == 400, response.text
+    assert sum(fake.failures.values()) == 1
+
+    response = await client.post(
+        "/auth/jwt/login", data={"username": _EMAIL, "password": _PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    assert fake.failures == {}  # a good login resets the streak
+
+
+async def test_failure_counter_never_stores_the_raw_identity(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Emails are hashed before they reach the store — no PII in Redis keys."""
+    fake = _MemoryLimiter()
+    monkeypatch.setattr(rl, "_limiter", fake)
+    await _register(client)
+
+    await client.post("/auth/jwt/login", data={"username": _EMAIL, "password": "nope"})
+
+    assert fake.failures
+    assert all(_EMAIL not in key and "@" not in key for key in fake.failures)
+
+
+async def test_auth_endpoints_are_throttled_per_client(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Over the auth tier, /auth/jwt/login answers 429 before it touches the user store."""
+    fake = _MemoryLimiter()
+    fake.allow = False
+    monkeypatch.setattr(rl, "_limiter", fake)
+
+    response = await client.post(
+        "/auth/jwt/login", data={"username": _EMAIL, "password": _PASSWORD}
+    )
+    assert response.status_code == 429, response.text
+    assert response.headers["Retry-After"] == str(auth_tier().window_seconds)
+
+
+async def test_refresh_endpoint_is_throttled_too(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _MemoryLimiter()
+    fake.allow = False
+    monkeypatch.setattr(rl, "_limiter", fake)
+
+    response = await client.post("/auth/jwt/refresh", json={"refresh_token": "irrelevant"})
+    assert response.status_code == 429, response.text
+{% endif %}

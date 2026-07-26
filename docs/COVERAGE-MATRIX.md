@@ -99,7 +99,7 @@
 | Webhook **SSRF egress guard** | 📋 | P1 |
 | Ingress security headers + CORS lockdown | 📋 | P2 |
 | Supply-chain (SBOM · Trivy · Cosign · SHA-pin) | 📋 | P2 |
-| Rate limiting + auth-abuse protection | 📋 | P8 |
+| Rate limiting + auth-abuse protection | ✅ | `ratelimit` (P8) |
 | **AI agent system-safety** (least-privilege, sandbox, HITL approval) | 🆕 | P29 |
 
 ## 10 · API & platform primitives

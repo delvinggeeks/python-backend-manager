@@ -52,6 +52,7 @@ src/app/
   schemas/         # shared pydantic models
 {% if include_email %}  email/           # provider-agnostic EmailPort + SMTP/SES adapters + templates (email extra)
 {% endif %}{% if include_jobs %}  jobs/            # arq worker + enqueue seam + tasks + cron schedule (worker extra)
+{% endif %}{% if include_ratelimit %}  ratelimit/       # RateLimitPort + atomic Redis token-bucket + plan tiers (cache extra)
 {% endif %}{% if include_observability %}  observability/   # OTel three pillars + /healthz + /readyz + Sentry (observability extra)
 {% endif %}tests/
 ```
@@ -213,7 +214,47 @@ provider's credentials per environment — never hard-coded:
 **password-reset** email on a reset request, rendered from these templates.{% endif %}
 
 {% endif %}
-{% if include_jobs %}
+{% if include_ratelimit %}
+## Rate limiting & auth-abuse protection
+
+Requests are budgeted by an atomic Redis **token bucket** — one Lua script per decision, so it is
+correct under concurrency across every app instance, has no fixed-window boundary burst, and is
+timed by the Redis server clock so hosts cannot disagree. Idle buckets expire, so key growth stays
+bounded.
+
+Apply it to a route with the dependency:
+
+```python
+from fastapi import Depends
+
+from app.ratelimit import rate_limit
+
+
+@router.post("/expensive", dependencies=[Depends(rate_limit())])
+async def expensive() -> None: ...
+```
+
+- **Scope** — the organization when the request is org-scoped (`/orgs/{org_id}/...`), else the
+  client IP, so one noisy tenant cannot spend another's budget. The key uses the route TEMPLATE, not
+  the concrete URL, so cardinality is bounded by route count.
+{% if include_billing %}- **Budget** — the org's plan tier (`app/ratelimit/tiers.py`), resolved from its active
+  subscription and cached in-process for `RATELIMIT_PLAN_CACHE_SECONDS` so the hot path stays off
+  Postgres. Pass `rate_limit(RateTier(limit=10, window_seconds=60))` to pin a tighter one.
+{% else %}- **Budget** — the default tier (`RATELIMIT_DEFAULT_LIMIT` / `..._WINDOW_SECONDS`). Pass
+  `rate_limit(RateTier(limit=10, window_seconds=60))` to pin a tighter one. With the billing
+  capability on, the budget instead follows the org's plan.
+{% endif %}- **Over budget** → `429` with a `Retry-After` header.
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}- **Auth abuse** — `/auth/jwt/login` and `/auth/jwt/refresh` carry a tighter per-client throttle, and
+  consecutive failed logins lock the identity out for `RATELIMIT_LOCKOUT_WINDOW_SECONDS`. The lockout
+  is checked *before* the password is verified, so a locked identity costs no argon2 hash. Identities
+  are hashed before they reach Redis — no emails in keys.
+{% endif %}
+**It fails OPEN, by design.** No `REDIS_URL`, an unreachable Redis, or any Redis error allows the
+request rather than rejecting it: a limiter outage must never become a service outage. Socket
+timeouts are tight (250 ms) so a slow Redis can't stall the hot path. Set `RATELIMIT_ENABLED=false`
+to switch enforcement off entirely (e.g. when an edge gateway already limits).
+
+{% endif %}{% if include_jobs %}
 ## Background jobs & scheduler (arq)
 
 Long-running or fire-and-forget work runs **out of band** on an

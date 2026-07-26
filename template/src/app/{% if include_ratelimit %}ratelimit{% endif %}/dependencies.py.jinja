@@ -1,0 +1,233 @@
+"""FastAPI rate-limit dependencies + auth-abuse helpers. Fail-open: a Redis outage never blocks.
+
+``rate_limit()`` is a route dependency enforcing a request budget per (scope, route). The **scope**
+is the organization when the request is org-scoped (``/orgs/{org_id}/...``), else the client IP — so
+one noisy tenant cannot spend another tenant's budget, and anonymous traffic is still bounded. The
+**route** part of the key is the route TEMPLATE (``/orgs/{org_id}/usage``), never the concrete URL,
+so key cardinality is bounded by the number of routes rather than by the number of path values.
+{% if include_billing %}
+Called with no argument, the budget is the caller's PLAN tier: the org's active subscription is
+resolved once and cached in-process for ``ratelimit_plan_cache_seconds``, so the hot path does not
+hit Postgres on every request.
+{% else %}
+Called with no argument the budget is the default tier; pass a ``RateTier`` for a tighter
+one. (With the billing capability on, the budget instead follows the org's plan.)
+{% endif %}
+The auth helpers defend the login / refresh endpoints: ``enforce_auth_rate_limit`` throttles
+attempts per client, and ``assert_not_locked_out`` / ``record_login_failure`` /
+``clear_login_failures`` implement a consecutive-failure lockout (brute-force defense).
+
+Everything degrades OPEN — a Redis outage allows traffic rather than rejecting it — and enforcement
+is skipped entirely when ``ratelimit_enabled`` is false.
+"""
+
+from __future__ import annotations
+
+import hashlib
+{% if include_billing %}
+import time
+import uuid
+{% endif %}
+from collections.abc import Awaitable, Callable
+
+from fastapi import HTTPException, Request, status
+{% if include_billing %}
+from sqlalchemy import select
+{% endif %}
+
+{% if include_billing %}
+from app.billing.entitlements import ACTIVE_STATUSES, FREE_PLAN
+from app.billing.models import Subscription
+{% endif %}
+from app.core.config import get_settings
+{% if include_billing %}
+{% if include_rls %}
+# RLS on: the plan lookup is a TRUSTED cross-tenant read (it resolves one org's plan by explicit id,
+# outside any tenant-scoped route logic), so it uses the BYPASSRLS connection — an RLS-bound session
+# with no tenant GUC set would return no rows and silently downgrade a paying org to the free tier.
+from app.db.session import PrivilegedSessionFactory as PlanSessionFactory
+{% else %}
+from app.db.session import SessionFactory as PlanSessionFactory
+{% endif %}
+{% endif %}
+from app.ratelimit.limiter import RedisRateLimiter
+from app.ratelimit.port import RateLimitPort
+{% if include_billing %}
+from app.ratelimit.tiers import RateTier, auth_tier, tier_for_plan
+{% else %}
+from app.ratelimit.tiers import RateTier, auth_tier, default_tier
+{% endif %}
+
+# The single adapter instance. Typed as the PORT so nothing here can reach past the seam.
+_limiter: RateLimitPort = RedisRateLimiter()
+{% if include_billing %}
+
+# org id -> (plan, expiry on the monotonic clock). Bounded: rate tiers tolerate brief staleness
+# after a plan change, and a hard cap stops an org-id flood from growing this without limit.
+_PLAN_CACHE: dict[str, tuple[str, float]] = {}
+_PLAN_CACHE_MAX = 10_000
+{% endif %}
+
+
+def _client_ip(request: Request) -> str:
+    """The peer address, or ``"anonymous"`` when the transport does not expose one.
+
+    NOTE: this is the DIRECT peer. Behind a proxy every request appears to come from the proxy, so
+    terminate ``X-Forwarded-For`` at a trusted ingress (or run uvicorn with ``--proxy-headers``)
+    before relying on IP scoping — never trust a client-supplied forwarding header here.
+    """
+    client = request.client
+    return client.host if client else "anonymous"
+
+
+def _route_key(request: Request) -> str:
+    """The route TEMPLATE for this request — what bounds key cardinality.
+
+    Reconstructed by substituting the matched path params back OUT of the concrete path
+    (``/orgs/<uuid>/usage`` -> ``/orgs/{org_id}/usage``) rather than reading
+    ``scope["route"].path``: since FastAPI 0.137 an included router is wrapped in an internal
+    ``_IncludedRouter`` and the route object on the scope carries its ROUTER-RELATIVE path (``""``
+    for a router mounted under a prefix), so that attribute cannot be trusted. Longest values are
+    substituted first so a short value can't partially shadow a longer one.
+    """
+    path = request.url.path
+    for name, value in sorted(
+        request.path_params.items(), key=lambda item: len(str(item[1])), reverse=True
+    ):
+        path = path.replace(str(value), "{" + name + "}")
+    return path
+
+
+def _hashed(value: str) -> str:
+    """Stable, case-insensitive digest of an identity — keeps raw emails out of Redis keys."""
+    return hashlib.sha256(value.strip().lower().encode()).hexdigest()[:32]
+{% if include_billing %}
+
+
+async def _plan_for_org(org_id: str) -> str | None:
+    """The org's active plan, cached in-process. ``None`` when unresolvable (→ the default tier).
+
+    Deliberately opens its OWN short-lived session on a cache miss instead of taking
+    ``Depends(get_session)``: a session dependency would hold a pooled connection for the FULL
+    lifetime of every rate-limited request — including a multi-second LLM call — which exhausts the
+    pool under load. A miss costs one brief connection, at most once per org per
+    ``ratelimit_plan_cache_seconds``; a hit costs nothing at all.
+    """
+    settings = get_settings()
+    ttl = settings.ratelimit_plan_cache_seconds
+    now = time.monotonic()
+    if ttl > 0:
+        cached = _PLAN_CACHE.get(org_id)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+    try:
+        organization_id = uuid.UUID(org_id)
+    except ValueError:
+        return None
+    async with PlanSessionFactory() as session:
+        result = await session.execute(
+            select(Subscription).where(Subscription.organization_id == organization_id)
+        )
+        subscription = result.scalar_one_or_none()
+        plan = (
+            subscription.plan
+            if subscription is not None and subscription.status in ACTIVE_STATUSES
+            else FREE_PLAN
+        )
+    if ttl > 0:
+        if len(_PLAN_CACHE) >= _PLAN_CACHE_MAX:
+            _PLAN_CACHE.clear()  # cheap bound; it refills from the next requests
+        _PLAN_CACHE[org_id] = (plan, now + ttl)
+    return plan
+{% endif %}
+
+
+def rate_limit(tier: RateTier | None = None) -> Callable[..., Awaitable[None]]:
+    """Build a dependency enforcing a request budget per (org|client, route). Raises 429 when over.
+
+    ``tier=None`` uses {% if include_billing %}the caller's plan tier{% else %}the default tier{% endif %}; pass a ``RateTier`` to pin one explicitly.
+    """
+
+    async def _dependency(request: Request) -> None:
+        settings = get_settings()
+        if not settings.ratelimit_enabled:
+            return
+        org_id = request.path_params.get("org_id")
+        scope = f"org:{org_id}" if org_id else f"ip:{_client_ip(request)}"
+        effective = tier
+        if effective is None:
+{% if include_billing %}
+            plan = await _plan_for_org(str(org_id)) if org_id else None
+            effective = tier_for_plan(plan)
+{% else %}
+            effective = default_tier()
+{% endif %}
+        allowed = await _limiter.hit(
+            f"{scope}:{_route_key(request)}",
+            limit=effective.limit,
+            window_seconds=effective.window_seconds,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded",
+                headers={"Retry-After": str(effective.window_seconds)},
+            )
+
+    return _dependency
+
+
+async def enforce_auth_rate_limit(request: Request) -> None:
+    """Throttle an auth endpoint per client IP (credential stuffing). 429 over the auth tier."""
+    if not get_settings().ratelimit_enabled:
+        return
+    tier = auth_tier()
+    allowed = await _limiter.hit(
+        f"auth:ip:{_client_ip(request)}:{_route_key(request)}",
+        limit=tier.limit,
+        window_seconds=tier.window_seconds,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts; try again later",
+            headers={"Retry-After": str(tier.window_seconds)},
+        )
+
+
+async def assert_not_locked_out(identifier: str) -> None:
+    """Raise 429 if ``identifier`` is locked out after too many consecutive failed logins.
+
+    TRADE-OFF, know it before you tune it: locking on the identity alone means an attacker who knows
+    an email can deliberately lock that account out (a targeted DoS). That is the conventional
+    trade — the alternative, keying on (identity, IP), is trivially defeated by a distributed
+    credential-stuffing run. The window is therefore short by default and pairs with the per-IP
+    throttle above; adjust ``ratelimit_lockout_threshold`` /
+    ``ratelimit_lockout_window_seconds`` if targeted lockout is the bigger risk for your users.
+    """
+    settings = get_settings()
+    if not settings.ratelimit_enabled:
+        return
+    if await _limiter.failure_count(_hashed(identifier)) >= settings.ratelimit_lockout_threshold:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Account temporarily locked after repeated failed logins; try again later",
+            headers={"Retry-After": str(settings.ratelimit_lockout_window_seconds)},
+        )
+
+
+async def record_login_failure(identifier: str) -> None:
+    """Count one failed login against ``identifier``; the lockout fires at the threshold."""
+    settings = get_settings()
+    if not settings.ratelimit_enabled:
+        return
+    await _limiter.count_failure(
+        _hashed(identifier), window_seconds=settings.ratelimit_lockout_window_seconds
+    )
+
+
+async def clear_login_failures(identifier: str) -> None:
+    """Reset the failed-login counter for ``identifier`` after a successful login."""
+    if not get_settings().ratelimit_enabled:
+        return
+    await _limiter.clear_failures(_hashed(identifier))

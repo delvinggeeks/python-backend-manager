@@ -62,7 +62,7 @@ a phase or its pipeline" view. *(Sev/verdict in [GAP-ANALYSIS.md](GAP-ANALYSIS.m
 | P5 | transactional outbox | `webhooks` | crash-between-commit-and-publish safe | `outbox_events` table + relay | outbox lag; lost-events = 0 |
 | P6 | IdempotencyPort | `idempotency` | duplicate key → one effect | `idempotency_keys` table | dup-replay rate |
 | P7 ⭐ | MeteringPort + BillingPort | `metering`/`metering_full` | ingest idempotent, rate, invoice, wallet | usage/outbox/wallet/invoice tables | meter accuracy; 0 double-bill |
-| P8 | RateLimitPort | `ratelimit` | per-tenant limit; fail-open no-Redis; auth-throttle | Redis | 429 rate; abuse blocked |
+| P8 | RateLimitPort (Lua token-bucket) | `ratelimit`/`ratelimit_full` | fail-open (absent + dead Redis); plan→tier; key scoping; 429+Retry-After; kill switch; login throttle + failed-login lockout; identity hashed | Redis (optional — absent = no-op) | 429 rate; lockout count; limiter-error rate |
 | P9 | NotificationPort | `notifications`/`_full` | email+in-app send; channel no-op unconfigured | prefs/feed tables | delivery rate per channel |
 | P10 | AuthorizationPort | `authz` | role checks via port (no behavior change) | none | authz decision latency |
 | P11 | WorkflowPort (DBOS) | `workflows` | durable run survives crash | DBOS tables on Postgres | workflow success/retry |

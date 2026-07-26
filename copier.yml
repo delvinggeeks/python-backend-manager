@@ -262,6 +262,22 @@ include_idempotency:
   default: "{{ include_db }}"
   when: "{{ include_db }}"
 
+include_ratelimit:
+  type: bool
+  help: >-
+    Scaffold per-tenant rate limiting + auth-abuse protection: an `app/ratelimit` package with a
+    `RateLimitPort` seam whose default adapter is a Redis **token-bucket implemented as one atomic
+    Lua script** (no fixed-window boundary burst, no read-modify-write race, server-clock timing so
+    every app host agrees, idle buckets expire). `rate_limit()` is a route dependency keyed per
+    ORGANIZATION when tenancy is on (falling back to client IP), and the org's plan selects its tier
+    — free / pro / enterprise budgets, resolved from the billing Subscription when billing is on and
+    cached briefly so the hot path doesn't hit Postgres per request. Auth endpoints get dedicated
+    abuse protection: login / refresh throttling plus a consecutive-failed-login lockout
+    (credential-stuffing defense). Everything **fails OPEN** — no REDIS_URL, an unreachable Redis or
+    any error allows the request rather than rejecting traffic, with tight socket timeouts so a slow
+    Redis can't stall the hot path. Implies the `cache` extra (Redis); no database required.
+  default: false
+
 include_metering:
   type: bool
   help: >-
@@ -332,6 +348,7 @@ sync_extras:
     {% if include_mcp %}{% set _ = parts.append('mcp') %}{% endif %}
     {% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin or include_metering %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% if 'users' not in parts %}{% set _ = parts.append('users') %}{% endif %}{% endif %}
     {% if include_audit %}{% if 'db' not in parts %}{% set _ = parts.append('db') %}{% endif %}{% endif %}
+    {% if include_ratelimit %}{% if 'cache' not in parts %}{% set _ = parts.append('cache') %}{% endif %}{% endif %}
     {% if include_admin %}{% if 'admin' not in parts %}{% set _ = parts.append('admin') %}{% endif %}{% endif %}
     {% if include_billing %}{% if 'payments' not in parts %}{% set _ = parts.append('payments') %}{% endif %}{% endif %}
     {% if include_storage %}{% if 'storage' not in parts %}{% set _ = parts.append('storage') %}{% endif %}{% endif %}
