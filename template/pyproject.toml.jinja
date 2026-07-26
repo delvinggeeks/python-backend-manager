@@ -58,7 +58,7 @@ users = ["fastapi-users[sqlalchemy]>=14"]
 payments = ["stripe>=11", "razorpay>=2.0"]
 # Both adapters' SDKs ship in the extra (SMTP via aiosmtplib, the Amazon SES API via aioboto3);
 # one is active per service via EMAIL_PROVIDER, and jinja2 renders the bodies.
-email = ["aioboto3>=14", "aiosmtplib>=3.0", "jinja2>=3.1"]
+email = ["aioboto3>=14", "aiosmtplib>=3.0.2", "jinja2>=3.1"]
 storage = ["aioboto3>=14"]
 admin = ["sqladmin>=0.20"{% if include_admin %}, "itsdangerous>=2.0"{% endif %}]
 {% if include_ratelimit %}
