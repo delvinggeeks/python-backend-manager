@@ -22,6 +22,16 @@ When a convention isn't obvious, **read this file — don't guess.**
   `chore:`; `feat!:` = major). On merge to `main`, CD auto-tags and cuts the GitHub
   Release — only `feat:` / `fix:` / breaking commits bump a version. Downstream services
   pick the tag up on their next `copier update`.
+- **Validating a capability leg → `scripts/leg-check.sh`, never a hand-typed command list.** It is
+  the single definition of "a leg passed" — `.github/workflows/ci.yml` invokes exactly the same
+  script with the same arguments. Two separate lists drift, and the drift only ever surfaces as
+  "it passed locally and CI disagrees". Adding a gate means adding it there, once.
+  Corollary: **commit before you validate.** `copier --vcs-ref HEAD` renders a *dirty worktree*, so
+  a leg-check on uncommitted edits silently validates something the commit does not contain.
+- **On a branch carrying one slice, stage by explicit path — never `git add -A`.** A sweep pulls in
+  whatever else is lying around: an unrelated doc, a deliberately-failing test from the next slice.
+  Enforced mechanically by `.claude/hooks/staged-scope.sh` against the prefixes declared in
+  `.claude/slice-scope`.
 - **Subagents are read-only.** `template-validator`, `build-judge`, `dependency-auditor`,
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
