@@ -70,7 +70,7 @@ ratelimit = ["redis[hiredis]>=5.2"]
 {% else %}
 ratelimit = ["fastapi-limiter>=0.1.6"]
 {% endif %}
-scheduler = ["apscheduler>=3.11"]
+scheduler = ["apscheduler>=3.11.3"]
 api = ["fastapi-pagination>=0.12", "python-slugify>=8"]
 rag = ["pypdf>=5", "qdrant-client>=1.12", "semantic-text-splitter>=0.20"]
 mcp = ["mcp>=1.2", "fastmcp>=2"]
