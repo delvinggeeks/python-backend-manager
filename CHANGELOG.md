@@ -4,10 +4,17 @@ All notable template changes are documented here. Projects pull these via
 `copier update`. Versions are git tags (PEP 440), cut automatically on merge to main.
 
 ## Unreleased
-Dependency-automation fixes on the template's **management surface** (root `renovate.json`
-+ root CI). Nothing under `template/` changed, so no tag is cut and there is nothing for a
-downstream `copier update` to pull — but every future Python bump now reaches the template.
+Dependency-automation fixes, mostly on the template's **management surface** (root
+`renovate.json` + root CI), plus the one-line template fix that was red-lighting the whole
+capability matrix.
 
+- **`ruff format` on the generated README.** ruff 0.16 — which the template's `ruff>=0.15`
+  floor now resolves to — formats Python code blocks inside Markdown. The arq snippet in the
+  `include_jobs` README section had three spaces before its trailing comment where ruff wants
+  two, so `ruff format --check .` failed on `generate (jobs)`, `generate (jobs_email)` and
+  `generate (observability_full)`. That red-lit the required `generate (capability)` check,
+  which is why every Renovate PR has been stuck since June. Inside the `include_jobs` gate, so
+  services without jobs are byte-identical.
 - **Renovate can finally see the template's Python dependencies.** `template/pyproject.toml.jinja`
   is a jinja file, so no built-in manager (pep621 / pip_requirements) ever parsed it — all 75
   lower-bound pins were invisible, and the Dependency Dashboard's "Detected Dependencies" listed
