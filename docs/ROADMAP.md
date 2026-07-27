@@ -48,6 +48,14 @@ The active queue. Everything below is coarse and carries `decompose on pull`.
 merged PR, never inferred from the batch — T2 was held back at first pass, when #73 was still open,
 and exited only once it merged.*
 
+*`GC-1` exits with the PR that fixes it, rather than in a later pass: the evidence and the exit are
+the same commit, so the ledger cannot claim a fix that did not land. Its scope was corrected against
+measurement — the ticket named four SIGPIPE sites and **two** actually fire (`:70`, `:72`); `:105` is
+structurally safe because `sort` buffers its whole input, and `:109` is a race that did not trigger
+at 14 matching files. Both latent sites were converted anyway. Verified by dispatch, not by reading:
+[run 30287201659](https://github.com/delvinggeeks/python-backend-manager/actions/runs/30287201659)
+completed and opened issue #77 — the first harvest that has ever existed.*
+
 ### P4-b · Close the metering + outbox RLS gap
 
 - **Deliverable:** every table exempted as DEBT in `RLS_EXEMPT_TABLES` carries a tenant policy, and
@@ -68,27 +76,6 @@ and exited only once it merged.*
   `template/tests/{% if include_rls %}test_rls.py{% endif %}` (the exemption list), §13.
 - **Blocked-by:** none (P4-a shipped). **Blocks:** none.
 - **AFK.** **Sized:** yes — the design decision is made, so this is migration + policy + list edit.
-
-### GC-1 · The harvest workflow dies on SIGPIPE before it opens the issue
-
-- **Deliverable:** `.github/workflows/gc-friday.yml` completes and opens its labelled issue.
-- **Evidence it is broken:** run
-  [30281687247](https://github.com/delvinggeeks/python-backend-manager/actions/runs/30281687247) —
-  the first real invocation, dispatched by hand — exited **141** (`128 + SIGPIPE`) in *Build the
-  inventory*, so no issue was created. The scheduled Friday run fails the same way, silently.
-- **Cause:** the step runs `set -euo pipefail`, and four pipelines end in a reader that closes early.
-  `head` exits after its quota, the writer upstream takes `SIGPIPE`, `pipefail` promotes 141 to the
-  pipeline's status, and `-e` aborts the step: `gc-friday.yml:70` (`| grep -q .`), `:72`
-  (`| head -200`), `:105` (`| sort -u | head -4`), `:109` (`| head -3`).
-- **Failing-test-first:** dispatch the workflow unchanged and observe exit 141 — the run above *is*
-  that observation, so this ticket starts from a recorded failure rather than a predicted one.
-- **Note:** `:70` fails differently and worse — the SIGPIPE lands on an `if` condition, where `-e`
-  does not abort, so it merely evaluates false and the harvest reports AGENTS.md `_unchanged_` on
-  exactly the weeks it did change. A green run would still have been wrong.
-- **File set:** `.github/workflows/gc-friday.yml`. Prefer readers that consume their whole input
-  (`sed -n '1,200p'`, `awk 'NR<=4'`) over `head` under `pipefail`.
-- **Blocked-by:** none. **Blocks:** the GC Friday cadence, and the five gated-block instances that
-  were to be posted into the harvest issue. **AFK.** **Sized:** yes.
 
 ### LINT-1 · This repo's own `scripts/*.py` have no format or lint gate
 

@@ -67,9 +67,18 @@ jobs:
             echo
 
             echo "## AGENTS.md changes this window"
-            if git log --since="$since" --oneline -- AGENTS.md | grep -q .; then
+            # NO `| head` and NO `| grep -q` anywhere in this step. Both close the pipe as soon as
+            # they have what they need, the writer upstream takes SIGPIPE, `pipefail` promotes that
+            # to 141, and `set -e` kills the step. Readers here must consume their whole input:
+            # a command substitution for the test, `sed -n` for the excerpt.
+            #
+            # The test below used to be `git log --oneline -- AGENTS.md | grep -q .`, and it failed
+            # in the WORSE direction: a SIGPIPE inside an `if` condition does not trip `set -e`, it
+            # just evaluates false. So the harvest printed "_unchanged_" on exactly the weeks
+            # AGENTS.md HAD changed, and exited 0 while doing it. Green, and wrong.
+            if [ -n "$(git log --since="$since" --oneline -- AGENTS.md)" ]; then
               echo '```diff'
-              git log --since="$since" -p --unified=1 -- AGENTS.md | head -200
+              git log --since="$since" -p --unified=1 -- AGENTS.md | sed -n '1,200p'
               echo '```'
             else
               echo "_unchanged_"
@@ -102,11 +111,11 @@ jobs:
                   | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9_-' '\n' \
                   | grep -E '^[a-z][a-z0-9_-]{4,}$' \
                   | grep -vwE 'their|there|which|while|about|after|before|fixes|fixed|should|because|through' \
-                  | sort -u | head -4)
+                  | sort -u | sed -n '1,4p')
                 [ -n "$terms" ] || continue
                 hits=""
                 for term in $terms; do
-                  found=$(grep -rilF "$term" docs README.md template/README.md.jinja 2>/dev/null | head -3 | tr '\n' ' ')
+                  found=$(grep -rilF "$term" docs README.md template/README.md.jinja 2>/dev/null | sed -n '1,3p' | tr '\n' ' ')
                   [ -n "$found" ] && hits="$hits\n    - \`$term\` -> $found"
                 done
                 if [ -n "$hits" ]; then
