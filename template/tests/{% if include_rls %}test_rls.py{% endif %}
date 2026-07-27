@@ -11,6 +11,7 @@ Docker / testcontainers isn't available (e.g. the default SQLite-only test runs)
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import sys
 import textwrap
@@ -422,3 +423,45 @@ def test_every_session_factory_is_tagged_with_an_rls_mode() -> None:
         "async_sessionmaker(...) built without info={'rls_mode': ...} — these sessions would run "
         f"with no tenant context: {', '.join(offenders)}"
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Dev/prod parity for the privileged role.
+#
+# `DATABASE_URL_PRIVILEGED` falls back to `DATABASE_URL` when unset, so a default local stack runs
+# "privileged" flows as the ordinary app role. With FORCE RLS that role sees nothing, which the
+# fail-fast now reports loudly — but the real fix is for the dev topology to match production. The
+# provisioning artifact is a SQL file the compose stack applies at first boot; this test applies
+# that same file to a throwaway Postgres and asserts the role it creates is genuinely privileged.
+# ---------------------------------------------------------------------------------------------
+
+_INIT_SQL = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "init-db" / "01-privileged-role.sql"
+
+
+async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> None:
+    """The role the local stack provisions must actually bypass RLS.
+
+    Without this the dev fallback silently makes DATABASE_URL_PRIVILEGED the app role, so every
+    trusted cross-tenant flow reads zero rows locally and behaves differently in production — the
+    class of divergence that is only ever discovered in production.
+    """
+    assert _INIT_SQL.exists(), (
+        f"{_INIT_SQL} is missing — the compose stack has no way to provision a privileged role, so "
+        "DATABASE_URL_PRIVILEGED falls back to the app role and dev does not match production"
+    )
+
+    owner = await asyncpg.connect(postgres_dsn)
+    try:
+        await owner.execute(_INIT_SQL.read_text())
+        row = await owner.fetchrow(
+            "SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = $1", "app_privileged"
+        )
+        assert row is not None, "the init script did not create the 'app_privileged' role"
+        assert row["rolbypassrls"], "'app_privileged' does not have BYPASSRLS"
+        assert row["rolcanlogin"], "'app_privileged' cannot log in, so no DSN can use it"
+
+        # Re-running must be safe: compose replays init scripts on any fresh volume, and an
+        # operator may apply it by hand against an existing database.
+        await owner.execute(_INIT_SQL.read_text())
+    finally:
+        await owner.close()
