@@ -1,138 +1,88 @@
-# ROADMAP.md — the ordered phase plan to a finished platform
+# ROADMAP.md — the ledger
 
-> Each phase is **one `feat:` PR**, gate-enforced, dependency-ordered, independently shippable, and
-> **inherits [PRINCIPLES.md](PRINCIPLES.md)** (esp. the P3 edge-validation matrix — *byte-identity
-> OFF · ALONE minimal-deps leg · `--vcs-ref HEAD` clean tree · tests under no infra* — which is NOT
-> restated per phase; assume it). Choices are justified in
-> [LIBRARY-DECISIONS.md](LIBRARY-DECISIONS.md); gaps in [GAP-ANALYSIS.md](GAP-ANALYSIS.md). Standing
-> module-build rules apply (branch → gate behind toggle → validate matrix+module → squash-merge with
-> the exact `feat:` title → CD tags the version). Versions below are *suggested* next tags from the
-> current **v0.18.0**; CD derives the real bump from the commit.
+> **The single ledger of OPEN work.** One numbering, one home. There is no separate overlay and no
+> mapping document: a mapping between two sources *is* two sources. Read a phase when you are about
+> to select or size work — this file is JIT, never always-read.
 
-Per-phase fields: **Scope · Toggle/Port · Implies/Deps · Definition-of-done · CI rows + special
-validation**. "CI rows" are additions to the `generate (capability)` matrix (the gate aggregates
-them automatically — no branch-protection change).
+## How the ledger works
 
-> **Every phase also obeys the full SDLC discipline** in [SDLC.md](SDLC.md): it ships its per-phase
-> artifact set (requirements + RTM rows, C4/sequence/ER-delta diagrams, STRIDE threat model, test
-> pyramid + port contract tests, DevSecOps gates, IaC/deploy note, runbook, SLO) and appends to the
-> [TRACEABILITY.md](TRACEABILITY.md) matrix — the Definition-of-Done blocks the squash-merge until that
-> trace is complete and CI-verified. The scope lines below are the *deltas*; the discipline is inherited.
+**Landed work exits.** A shipped phase is deleted from here, not annotated. Its record lives in
+[CHANGELOG.md](../CHANGELOG.md) (what changed) and, for anything enforced,
+[SECURITY-BASELINE.md](SECURITY-BASELINE.md) §13 (where the guardrail lives, with an evidence path).
+A ledger that keeps its completed items becomes an archive, and an archive is read by nobody.
+**P1–P8 shipped through v0.35.0 and have left this file.** What is shipped is listed once, in
+[COVERAGE-MATRIX.md](COVERAGE-MATRIX.md).
 
----
+**Exits are decided per phase, on shipped evidence — never by deleting a grouping.** Wave headings
+group by *theme*; ship status accrues per *phase*. The two do not align, and assuming they do loses
+work or keeps it. P8 shipped as v0.35.0 but sits under the Wave 4 heading, so removing Waves 0–3
+left it behind; it was caught by checking phases against the changelog, not by reading the outline.
+Before removing anything, confirm that phase's evidence in [CHANGELOG.md](../CHANGELOG.md) or
+[SECURITY-BASELINE.md](SECURITY-BASELINE.md) §13 individually.
 
-## Wave 0 — near-free hardening (no behavior change; fast, low-risk)
+**Two levels, deliberately.**
 
-### P1 · Webhook SSRF egress guard  🔴
-- **Scope:** resolve-then-pin egress guard on outbound webhook delivery; block
-  private/link-local/loopback/`169.254.169.254`; re-validate on redirect; DNS-rebinding-safe.
-  Retrofit of the shipped `webhooks` module.
-- **Toggle/Port:** none new (part of `include_webhooks`); internal `egress_guard` helper.
-- **Implies/Deps:** webhooks. None.
-- **DoD:** delivery to a private/metadata IP is refused + logged; public IPs unaffected; unit tests
-  cover IPv4/IPv6/redirect/rebind cases.
-- **CI:** reuse `webhooks` / `audit_webhooks` rows; add a guard unit test (no network).
+- **Phases are COARSE** — outcome, hard outer lines, blocks/blocked-by. No task detail. A phase is a
+  destination, not a plan.
+- **Only next-up phases carry tickets.** Every other phase carries `decompose on pull`, and that
+  decomposition is itself one planning-session ticket when the phase becomes next-up. Decomposing
+  early produces tickets written against a codebase that no longer exists by the time they are pulled.
 
-### P2 · Supply-chain + ingress + **code-quality/determinism** hardening  🟠 (CI + a small middleware)
-- **Scope:** (a) **supply-chain** — SBOM (CycloneDX/Syft), Trivy image scan, Cosign keyless signing
-  (GitHub OIDC), SHA-pinned actions, **reproducible builds** (`SOURCE_DATE_EPOCH` + digest-pinned base
-  image), **SLSA-2** provenance — in **both** the template CI and the **generated** service CI. (b)
-  **ingress hardening** — security-headers middleware (HSTS, `X-Content-Type-Options`, `X-Frame-Options`/
-  CSP, `Referrer-Policy`) + tightened CORS. (c) **code-quality + determinism gates** (full spec in
-  [CODE-QUALITY.md](CODE-QUALITY.md)) — add **`vulture`** (dead code), **`radon`/`xenon`** (complexity),
-  **`import-linter`** (enforce the ports/adapters architecture in CI), **`interrogate`** (docstrings),
-  **per-PR patch-coverage** gate; **`Hypothesis`** invariants + **`Schemathesis`** OpenAPI fuzz +
-  **`pytest-randomly`** + **`freezegun`/`time-machine`** (deterministic, flaky-surfacing tests). The
-  Python-native stack is the default (**SonarQube** is a documented ≥50-dev seam — ADR-36).
-- **Toggle/Port:** none new (CI surface + safe-by-default middleware + dev-deps). `mutmut` mutation
-  gate + nightly flaky-sweep are optional informational jobs (SEAM-NOW).
-- **Implies/Deps:** none. The generated-workflow render-gate validates the YAML.
-- **DoD:** template + generated CI emit a signed, reproducible image + SBOM; security headers present;
-  CORS locked; the quality gate (dead-code=0, complexity≤C, import-linter contracts pass, docstring≥80%,
-  patch-coverage met) blocks a failing PR; Hypothesis/Schemathesis run in pytest; pytest-randomly green.
-- **CI:** existing rows + the quality-gate steps in the matrix legs + a header-presence test (no new
-  required check; the aggregated gate covers them).
+**Ticket format** (mandatory fields): one-sentence deliverable · done-contract sketch (grows to full
+criteria at build) · failing-test-first entry point · file-set touched · blocks/blocked-by ·
+**AFK**/**HITL** tag · sized-for-one-session assertion. Where two tickets share an interface, the
+interface lands as its own tiny ticket first, so the dependents are genuinely independent sessions.
+
+**One ticket per session** — see AGENTS.md's session protocol. The sizing assertion is what makes
+that rule enforceable rather than aspirational.
 
 ---
 
-## Wave 1 — security & reliability foundations
+## NEXT UP — decomposed
 
-### P3 · Auth session hardening  🔴
-- **Scope:** short access + **rotating refresh tokens** (reuse detection), **Redis JTI denylist**,
-  logout-everywhere, token-version bump on password reset. Retrofit of `users`.
-- **Toggle/Port:** part of `users`; lays the groundwork for `AuthnPort` (P13).
-- **Implies/Deps:** users. Uses Redis when present — **denylist degrades gracefully (best-effort,
-  P4-style) with no Redis** so the ALONE/no-infra leg passes.
-- **DoD:** refresh rotates + detects reuse; revoked token rejected; logout-all works; no-Redis path
-  still authenticates (denylist no-ops with a logged warning).
-- **CI:** `users` row asserts rotation + revocation under **unreachable Redis**.
+These three are the active queue. Everything below them is coarse.
 
-### P4 · Tenancy RLS backstop  🔴
-- **Scope:** Postgres RLS as a second isolation layer — session GUC `app.current_tenant` set per
-  transaction via a SQLAlchemy hook; `CREATE POLICY` + `FORCE ROW LEVEL SECURITY` on tenant tables;
-  PgBouncer transaction-mode note. Retrofit of `tenancy`.
-- **Toggle/Port:** `include_rls` (default true with tenancy) — or always-on with tenancy.
-- **Implies/Deps:** tenancy. Additive Alembic migration.
-- **DoD:** a query that *omits* the app-level `WHERE org_id` still cannot read another tenant's rows;
-  tests run as a **low-privilege app role** (not superuser); RLS round-trips in the migration.
-- **CI:** `tenancy` / `*_full` rows + a **cross-tenant-leak test** proving RLS blocks; sqlite test
-  path tolerates RLS-absent (Postgres-only enforcement documented).
+### T1 · Real `BYPASSRLS` role in local compose  (was FU-1)
 
----
+- **Deliverable:** local compose provisions a dedicated `BYPASSRLS` role so `DATABASE_URL_PRIVILEGED`
+  stops falling back to the app URL and dev matches production.
+- **Done-contract sketch:** a fresh `docker compose up` yields a privileged session that passes the
+  existing `PrivilegedRoleMisconfigured` fail-fast; the app role still cannot bypass RLS.
+- **Failing-test-first:** extend `test_rls.py` to assert the privileged role reports `rolbypassrls`
+  against the compose-provisioned database — fails today, because dev falls back to the app role.
+- **Files:** `template/compose.yaml`, init SQL under `template/scripts/`, `template/.env.example`,
+  `template/tests/…test_rls.py`.
+- **Blocks / blocked-by:** neither.
+- **AFK.** **Sized:** one file set, one test, no cross-module surface.
 
-## Wave 2 — reliability spine (prerequisites for metering)
+### T2 · GC-Friday workflow PR  (blocks T3's evidence)
 
-### P5 · Transactional outbox  🔴
-- **Scope:** `outbox_events` table written **in the business transaction**; an arq relay drains it
-  with retry/dead-letter. Rewire webhook + audit fan-out through it. Fixes the shipped dual-write race.
-- **Toggle/Port:** internal (no vendor port); ships with db + worker.
-- **Implies/Deps:** db; worker (relay). Pairs with webhooks/audit.
-- **DoD:** an event enqueued in the same txn is never lost if the process dies before publish; relay
-  is idempotent; dedup via `(source,event_id)`.
-- **CI:** `webhooks` row asserts outbox publish + replay-safety under no infra (fake pool).
+- **Deliverable:** open the PR for the pushed `gc-friday-workflow` branch, with the AGENTS.md caveat
+  updated to state that the trigger and inventory are mechanical while the judgement is invoked.
+- **Done-contract sketch:** workflow merged; the first harvest issue logs the five recorded
+  gated-block instances as T3's evidence base.
+- **Failing-test-first:** n/a — a CI workflow; `actionlint` clean is the gate.
+- **Files:** `.github/workflows/gc-friday.yml` (already committed on the branch), `AGENTS.md`.
+- **Blocks:** T3's evidence logging. **Blocked-by:** neither.
+- **HITL** — it opens an issue against the repository.
+- **Sized:** yes.
 
-### P6 · Idempotency keys  🔴
-- **Scope:** `Idempotency-Key` header support on mutating endpoints; Postgres unique-constraint store;
-  cached-response replay; `IdempotencyPort` + FastAPI dependency.
-- **Toggle/Port:** `include_idempotency` (default true); `IdempotencyPort`.
-- **Implies/Deps:** db.
-- **DoD:** a duplicate key returns the original response with no second effect; TTL/cleanup job;
-  concurrent duplicates serialize safely.
-- **CI:** `idempotency` row (ALONE, db) — duplicate POST → one effect.
+### T3 · GC-Friday micro-render hook
 
----
-
-## Wave 3 — the priority: usage billing
-
-### P7 · Usage metering + rating + invoicing  🔴 ⭐
-- **Scope:** Postgres-native **`MeteringPort` + `BillingPort`**: `UsageEvent` (idempotent ingest via
-  P6) → `UsageOutbox` (via P5) → aggregation → rating engine (base + included quota + overage) →
-  `Invoice`; prepaid `CustomerWallet`/`WalletTransaction`; burn-rate alerts (via notifications); charge
-  through the existing `PaymentsPort`. Managed adapters (Lago/OpenMeter/Stripe-Meters) as stubs behind
-  the port. Extends/retrofits `billing`.
-- **Toggle/Port:** `include_metering` (implies billing); `MeteringPort`, `BillingPort`,
-  `metering_provider` setting.
-- **Implies/Deps:** billing (→ tenancy/users/db/payments); **P5 outbox + P6 idempotency** (hard deps).
-- **DoD:** end-to-end ingest→rate→invoice→charge works on sqlite/no-infra with the default adapter;
-  idempotent ingest; wallet debit is atomic; an invoice syncs to a `PaymentsPort` charge; burn-rate
-  alert fires. **India note documented**: meter in-app, charge on Razorpay/Stripe.
-- **CI:** `metering` (ALONE: metering+billing minimal) + `metering_full` (+webhooks +audit +
-  notifications) rows; alembic round-trip of the new tables.
+- **Deliverable:** a pre-commit hook that renders each staged `.jinja` with gated blocks OFF and runs
+  `ruff format --check` on the render.
+- **Done-contract sketch:** a staged `.jinja` whose gated-off render is malformed fails the commit.
+  Labelled a **fast-feedback shortcut** — the leg matrix remains the complete gate for this class,
+  because the failure depends on toggle combinations a single render cannot cover.
+- **Failing-test-first:** reconstruct any of the five recorded instances — strongest is the isort
+  case, where the correct blank-line count *differs per render* — and show the hook catching it.
+- **Files:** `scripts/`, root `.pre-commit-config.yaml` (does not exist yet; creating it is in scope).
+- **Blocked-by:** T2 (evidence base). **Blocks:** neither.
+- **AFK.** **Sized:** yes.
 
 ---
 
 ## Wave 4 — platform seams (value-ordered; mostly independent)
-
-### P8 · Per-tenant rate limiting & quotas  🟠
-- **Scope:** `RateLimitPort` (Redis token-bucket via `fastapi-limiter`), keyed `tenant:plan:endpoint`;
-  Postgres quota counters tied to entitlements (when billing present).
-- **Toggle/Port:** `include_ratelimit` (implies cache); `RateLimitPort`.
-- **Implies/Deps:** cache. Optional tie-in to billing entitlements.
-- **DoD:** per-tenant limits enforced; plan tiers map to limits; degrades open if Redis down (P4);
-  **auth endpoints get abuse protection** (login/refresh throttling + lockout on repeated failures —
-  *skeptic-review addition: credential-stuffing/brute-force defense belongs with rate-limiting*).
-- **CI:** `ratelimit` row (ALONE, cache) under unreachable Redis (fails-open path); an auth-throttle
-  test.
 
 ### P9 · Notifications (multi-channel)  🟠
 - **Scope:** `NotificationPort` generalizing `EmailPort` (email becomes one adapter); **in-app feed
@@ -144,6 +94,7 @@ them automatically — no branch-protection change).
 - **DoD:** email + in-app send via the port; SMS/WhatsApp/push adapters no-op-when-unconfigured;
   preference/opt-out honored; quiet hours respected.
 - **CI:** `notifications` (ALONE: email+db) + `notifications_full` (+users) rows; no live providers.
+- *decompose on pull*
 
 ### P10 · Authorization port (ReBAC seam)  🟡
 - **Scope:** thin `AuthorizationPort` (`check(subject, action, resource)`) wrapping the current role
@@ -153,6 +104,7 @@ them automatically — no branch-protection change).
 - **DoD:** existing role checks route through the port unchanged; stub raises NotImplemented; no
   behavior change (byte-identity of role decisions).
 - **CI:** `authz` row (ALONE) — role checks via the port.
+- *decompose on pull*
 
 ### P11 · Durable workflows  🟠
 - **Scope:** `WorkflowPort` for long multi-step flows; arq adapter (simple) + **DBOS Transact**
@@ -162,6 +114,7 @@ them automatically — no branch-protection change).
 - **DoD:** a multi-step workflow survives a mid-run crash (durable adapter); arq adapter covers the
   simple case; no-infra test uses the in-Postgres durable path on sqlite or a fake.
 - **CI:** `workflows` row.
+- *decompose on pull*
 
 ### P12 · Datasource bridge (tenant→DB)  🟠
 - **Scope:** `DatasourcePort` (`get_session_factory(tenant_id)`) with a pooled-shared default and a
@@ -171,8 +124,10 @@ them automatically — no branch-protection change).
 - **DoD:** all queries go through the port; pooled default unchanged; silo routing covered by a
   mock-engine test; no query-site changes.
 - **CI:** `tenancy` rows (pooled) + a datasource-port unit test.
+- *decompose on pull*
 
 ### P13 · Enterprise identity (SSO/MFA)  🟠
+- **Overlay merged (was W3):** a narrower, EARLIER slice lands first — an OIDC/JWKS *verifier* for `platform` mode (stateless; no local user tables). Full SSO/MFA remains this phase's scope.
 - **Scope:** `AuthnPort` + an OIDC adapter (authlib); SAML/SCIM stubs; self-host Authentik seam doc;
   **TOTP MFA** (`pyotp`) behind a toggle; passkeys later. Builds on P3.
 - **Toggle/Port:** `include_sso` (OIDC), `include_mfa` (TOTP); `AuthnPort`, `authn_provider` setting.
@@ -180,14 +135,17 @@ them automatically — no branch-protection change).
 - **DoD:** OIDC login flow works against a mock IdP; TOTP enroll+verify; default jwt path unchanged;
   no-infra tests use a fake OIDC discovery doc.
 - **CI:** `sso` + `mfa` rows (ALONE, users) — no live IdP.
+- *decompose on pull*
 
 ### P14 · Secrets provider seam  🟠
+- **Overlay merged (was W12 day-0):** this phase IS the day-0 secrets story; W12/P45 adopts it rather than restating it.
 - **Scope:** `SecretsPort` with the env/`.env` default adapter + an Infisical adapter stub.
 - **Toggle/Port:** `secrets_provider` setting (default `env`); `SecretsPort`.
 - **Implies/Deps:** none.
 - **DoD:** `get_settings()` sources through the port; env adapter byte-identical to today; stub
   documented.
 - **CI:** `secrets` row (ALONE) — env adapter.
+- *decompose on pull*
 
 ### P15 · PII field-level encryption  🟠
 - **Scope:** `EncryptionPort` + SQLAlchemy `EncryptedType`; envelope encryption with a local DEK
@@ -197,6 +155,7 @@ them automatically — no branch-protection change).
 - **DoD:** encrypt/decrypt round-trips transparently via the ORM; off = plaintext byte-identical;
   KMS adapter stubbed; latency noted.
 - **CI:** `pii_encryption` row — round-trip on sqlite.
+- *decompose on pull*
 
 ### P16 · Data-subject rights (export + erasure)  🟠
 - **Scope:** export (async arq job → signed URL) + **crypto-shredding** erasure (drop the P15 key) +
@@ -206,14 +165,17 @@ them automatically — no branch-protection change).
 - **DoD:** export produces a complete per-subject bundle; erasure renders PII unreadable without
   mutating the append-only audit log; actions audited first.
 - **CI:** `data_rights` row.
+- *decompose on pull*
 
 ### P17 · API versioning & pagination conventions  🟠
+- **Overlay merged (was W9, part):** the pagination convention is a *gate input*, not a doc convention — the contract lint asserts exactly one convention across collection endpoints.
 - **Scope:** URL `/v1` versioning, cursor/keyset pagination helper (`fastapi-pagination`),
   RFC-8594/9745 Deprecation/Sunset middleware.
 - **Toggle/Port:** `include_api_conventions` (or fold into the `api` extra).
 - **Implies/Deps:** none.
 - **DoD:** versioned mount + cursor params + deprecation headers on an example route; docs.
 - **CI:** `api` row.
+- *decompose on pull*
 
 ### P18 · Feature flags  🟡
 - **Scope:** `FeatureFlagPort` with a Postgres flag-table default adapter (OpenFeature-shaped); Unleash
@@ -222,6 +184,7 @@ them automatically — no branch-protection change).
 - **Implies/Deps:** db.
 - **DoD:** flag eval via the port (cached); DB adapter default; Unleash stub.
 - **CI:** `feature_flags` row.
+- *decompose on pull*
 
 ### P19 · Search port  🟡
 - **Scope:** thin `SearchPort` over Postgres-native full-text (`tsvector`/GIN) + `pgvector`; external
@@ -230,6 +193,7 @@ them automatically — no branch-protection change).
 - **Implies/Deps:** db.
 - **DoD:** full-text + vector query via the port on Postgres; external adapter stubbed.
 - **CI:** `search` row.
+- *decompose on pull*
 
 ### P20 · Cost & ops defaults  🟡 (mostly docs + light code)
 - **Scope:** document **Cloudflare R2 (zero-egress)** as the recommended storage default endpoint;
@@ -241,6 +205,7 @@ them automatically — no branch-protection change).
   a **backup/DR + data-retention posture** doc (PITR/snapshot guidance + per-data-class retention
   windows tied to DPDP) — *skeptic-review addition: durability/retention was implied but unstated*.
 - **CI:** existing rows; readyz test asserts timeout behavior.
+- *decompose on pull*
 
 ---
 
@@ -251,6 +216,7 @@ LLM calls** (no live provider keys). The throughline: the gateway/engines are se
 cost-metering is the core** (ties to P7).
 
 ### P21 · LLM gateway + per-tenant token metering  🔴 ⭐
+- **Overlay merged (was W1):** the `ai` module — `LLMPort` (pure, no DB), an `ai/service.py` facade as the sole caller (metering + `gen_ai.*` spans unskippable by import-linter), ONE OpenAI-compatible HTTP adapter (no provider SDKs in the tree), prompt registry, evals seam. `ai_layer: none|port`, default `port`.
 - **Scope:** `LLMPort` (LiteLLM **SDK in-process** default) with provider routing + fallback,
   **prompt caching** + **semantic caching** (Redis), and a **token-usage → `MeteringPort`** bridge
   with per-tenant **budget caps (429 on exceed)**. Charge via the existing `PaymentsPort`.
@@ -262,8 +228,10 @@ cost-metering is the core** (ties to P7).
   live key).
 - **CI:** `llm_gateway` row (ALONE: llm+cache) + `llm_gateway_full` (+billing metering) under a fake
   provider + unreachable Redis (caching degrades open).
+- *decompose on pull*
 
 ### P22 · Agent runtime seam + GenAI tracing  🟠
+- **Overlay merged (was W2):** collapse `agent_framework` (4 values) to `ai_layer: none|port`; drop langgraph/openai-agents extras; copier `_migrations` rewrites stored answers; `feat!:` major.
 - **Scope:** a thin **`AgentRuntime`/`AgentPort`** wrapping the framework toggles (pydantic-ai default;
   retrofit `example_agent.py`); emit **OTel GenAI spans** (tokens/cost/model/tool calls) via the
   existing observability seam; per-call cost + usage-cap; long runs wrap **`WorkflowPort` (P11)**.
@@ -272,6 +240,7 @@ cost-metering is the core** (ties to P7).
 - **DoD:** the `/agent` route runs via the port for each framework; GenAI spans emitted when
   observability on; no behavior change when off (byte-identity); durable variant checkpoints via P11.
 - **CI:** framework matrix rows assert the runner + (when observability) span attributes, mocked LLM.
+- *decompose on pull*
 
 ### P23 · RAG / RetrievalPort  🟠
 - **Scope:** build the `rag` module — `RetrievalPort` with a **pgvector-native** hybrid search
@@ -282,6 +251,7 @@ cost-metering is the core** (ties to P7).
 - **DoD:** ingest→chunk→embed→store→hybrid-retrieve works on sqlite/pgvector test path with a mocked
   embedder; rerank optional; tenant-scoped + erasable.
 - **CI:** `rag` row (db) with a fake embedding function.
+- *decompose on pull*
 
 ### P24 · Agent memory / MemoryPort  🟠
 - **Scope:** `MemoryPort` — Postgres `threads`/`messages`/`memory_facts` (+ pgvector long-term),
@@ -292,6 +262,7 @@ cost-metering is the core** (ties to P7).
 - **DoD:** add/fetch thread + semantic fact retrieval via the port; tenant-isolated; TTL/erase works;
   mocked embedder for no-infra.
 - **CI:** `memory` row (db).
+- *decompose on pull*
 
 ### P25 · LLM evals + eval-gate + tracing backend  🔴
 - **Scope:** a **DeepEval** harness (`evals/`) + a CI **eval-gate** (accuracy/safety/cost-delta
@@ -302,6 +273,7 @@ cost-metering is the core** (ties to P7).
 - **DoD:** `just evals` runs locally; the CI gate blocks a regression beyond threshold; baselines
   stored in-repo; no live provider needed (recorded fixtures / mock judge).
 - **CI:** an `evals` leg on framework rows (skips `none`); thresholds gate merge.
+- *decompose on pull*
 
 ### P26 · Guardrails + prompts + MCP tool safety  🟠
 - **Scope:** `GuardrailPort` (`instructor` + LLM-Guard PII/injection + Guardrails AI; PII redaction
@@ -312,6 +284,7 @@ cost-metering is the core** (ties to P7).
 - **DoD:** injection/PII scan on the prompt boundary; schema-enforced output; prompt fetch-by-label;
   MCP tools scoped per tenant + URL-fetch tools SSRF-guarded; all no-op-safe when unconfigured.
 - **CI:** `guardrails` + `mcp` rows (mocked LLM; SSRF unit test).
+- *decompose on pull*
 
 ---
 
@@ -331,6 +304,7 @@ cross-wave deps noted. **P29 is security-critical and gates production agents.**
 - **DoD:** WS connect/subscribe/publish/presence/backfill; JWT auth + per-channel authz; backfill from
   outbox; rate-limit present; **mocked Redis** in the no-infra test (degrades to single-worker).
 - **CI:** `realtime` row (ALONE: cache) with a fake WS client + mocked pub/sub.
+- *decompose on pull*
 
 ### P28 · Mobile / BFF backend support  🟠
 - **Scope (BUILD-NOW backend caps):** a **version-gate `/config`** endpoint (force-upgrade /
@@ -347,6 +321,7 @@ cross-wave deps noted. **P29 is security-critical and gates production agents.**
   pass); APNs adapter no-ops unconfigured; PKCE flow; `SyncPort` stub documented. Mocked attestation
   in CI.
 - **CI:** `mobile` row (users) — version-gate + attestation verify (mocked), no live Apple/Google.
+- *decompose on pull*
 
 ### P29 · AI agent **system-safety** (jailbreak / least-privilege)  🔴 ⭐ (gates production agents)
 - **Scope:** defense-in-depth against a jailbroken / prompt-injected agent **acting on the system**
@@ -374,6 +349,7 @@ cross-wave deps noted. **P29 is security-critical and gates production agents.**
   action is audited; threat-sim tests (injection, memory-poison, runaway) pass — all against a
   **mocked LLM**, ₹0 infra.
 - **CI:** `agent_safety` row — capability-deny, arg-injection-reject, spend-cap, approval-gate tests.
+- *decompose on pull*
 
 ### P30 · Crypto / blockchain payments  🟠 (+ ⚠ India compliance gate)
 - **Scope:** a **`CryptoPaymentAdapter` behind the existing `PaymentsPort`** (Option A — crypto is
@@ -393,6 +369,7 @@ cross-wave deps noted. **P29 is security-critical and gates production agents.**
   BTCPay + a stablecoin adapter; signature-verified, replay-safe; no-op-when-unconfigured; the
   compliance caveat surfaced in README + DECISIONS-NEEDED. Mocked chain/webhook in CI.
 - **CI:** `crypto_payments` row (billing) — signature verify + idempotent confirmation, mocked.
+- *decompose on pull*
 
 ---
 
@@ -420,6 +397,7 @@ on-page meta, and Core-Web-Vitals-frontend** (out of scope — separate repo).
   cert auto-issued/renewed via the default adapter (mocked ACME in CI); unknown Host rejected; per-tenant
   isolation proven. No live ACME in CI.
 - **CI:** `custom_domains` row — Host→tenant resolution + allowlist-reject + verification-state tests (mocked DNS/ACME).
+- *decompose on pull*
 
 ### P32 · Backend SEO surface  🟡
 - **Scope (BUILD-NOW in-phase):** dynamic **`sitemap.xml`** (sitemap-index for >50k URLs, lastmod,
@@ -438,6 +416,7 @@ on-page meta, and Core-Web-Vitals-frontend** (out of scope — separate repo).
   enforced (301); redirect manager round-trips; JSON-LD endpoint returns valid schema.org; prerendering
   documented as frontend-owned. Validated with golden-file sitemap/robots + schema validation.
 - **CI:** `seo` row — sitemap/robots well-formedness + canonical-redirect + JSON-LD schema-valid tests.
+- *decompose on pull*
 
 ---
 
@@ -456,6 +435,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** correct GST per place-of-supply; GSTIN validation; sequential gap-free invoice numbers;
   compliant PDF; IRN adapter stubbed/mocked; VAT/nexus via the managed seam. Golden-invoice + tax-calc tests.
 - **CI:** `tax` row (billing) — GST calc + GSTIN-validate + invoice-numbering (mocked IRP).
+- *decompose on pull*
 
 ### P34 · Analytics & reporting  🟠
 - **Scope:** `AnalyticsPort` (per-tenant metrics/time-series — **Postgres-native continuous aggregates /
@@ -467,8 +447,10 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** time-series query + dimensional breakdown (RLS-scoped); streaming CSV/XLSX export (memory-safe);
   scheduled PDF via worker; mocked data in CI.
 - **CI:** `analytics` row — aggregate query + streaming export + PDF render.
+- *decompose on pull*
 
 ### P35 · Public API / developer platform  🟠
+- **Overlay merged (was W9):** contract-quality gates land FIRST and gate everything derived — per-module OpenAPI fragments, operation-level completeness (Spectral), breaking-change gate (oasdiff), RFC 9457 Problem Details, then Scalar/SDKs/MCP/changelog as *derived artifacts*. Key hardening (test/live prefixes, rotation, lifecycle→audit, per-key quotas) rides here.
 - **Scope:** be an **OAuth 2.1 / OIDC provider** (Authlib + `oauth_clients`/consent tables;
   `/oauth/authorize|token|revoke`) so third-party apps act on behalf of users (the *provider* side of
   `AuthnPort`); a generalized **inbound-webhook receiver** (HMAC verify → outbox P5) + **app registry /
@@ -480,6 +462,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** authorization-code+PKCE flow (mock client); token issue/revoke; inbound webhook HMAC-verify→outbox;
   app registry CRUD + revoke; SDK generated in CI; Scalar docs served. No live third-party in CI.
 - **CI:** `dev_platform` row — OAuth flow + inbound-webhook verify + SDK-gen smoke.
+- *decompose on pull*
 
 ### P36 · i18n / l10n / multi-currency / timezones  🟠
 - **Scope:** `LocalizationPort` — backend string i18n (**Babel/gettext**, ICU plurals), locale
@@ -492,6 +475,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** locale resolves + fallback chain; translated email/error strings; JSONB content served per
   locale; money math currency-safe; UTC stored + tz-converted on read. Babel extract/compile in CI.
 - **CI:** `localization` row — locale-resolution + money-currency-safety + tz-conversion tests.
+- *decompose on pull*
 
 ### P37 · File / media processing  🟠 (malware scan = security gate)
 - **Scope:** `MediaProcessingPort` on top of object storage — **presigned direct-to-S3 upload** +
@@ -504,6 +488,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** presign + magic-byte reject of spoofed types; ClamAV scan → quarantine + audit on infected
   (mock clamd in CI); pyvips resize/convert; OCR extract (mock). No live AV/network in CI.
 - **CI:** `media` row (storage) — validation-reject + scan-quarantine + resize (mocked).
+- *decompose on pull*
 
 ### P38 · Tenant lifecycle & onboarding automation  🟠
 - **Scope:** a tenant **state machine** (`PENDING_PAYMENT → ACTIVE → TRIAL → SUSPENDED → OFFBOARDED →
@@ -516,6 +501,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **DoD:** state transitions audited; trial-expiry job; up/downgrade proration via the payments port;
   suspend blocks writes/allows reads; offboard exports-then-purges with retained audit trail. Mocked clock/Stripe.
 - **CI:** `tenant_lifecycle` row — state-machine transitions + suspend-blocks-writes + offboard-purge tests.
+- *decompose on pull*
 
 ---
 
@@ -537,6 +523,7 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
   reversible. Works on sqlite/no-infra with the default adapter.
 - **CI:** `pricing` (ALONE: pricing+metering+billing) + `pricing_full` (+API-product +add-ons +proration);
   alembic round-trip.
+- *decompose on pull*
 
 ### P40 · AI pricing intelligence (revenue optimization)  🟠 ⭐
 - **Scope:** a **`PricingIntelligencePort`** that reads metering (P7) + analytics (P34: MRR/ARR/churn/
@@ -559,6 +546,59 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
   a guardrail-rejection + an llm→rules degradation test.
 - **Human gate (D20 ⚠️):** enabling **dynamic/personalized pricing** is a legal/fairness/regional call —
   default **off** (rules baseline + human approval only) until the founder explicitly enables it.
+- *decompose on pull*
+
+---
+
+---
+
+## Wave 10 — platform surface & operability (merged overlay; all `decompose on pull`)
+
+### P41 · Clean-room evaluator  🟡  (was W6)
+- **Outcome:** `build-judge` grades by RUNNING the generated service against a contract negotiated
+  before the build, never by reading diffs, and never sees builder transcripts.
+- **Outer lines:** no template body change; `.claude/` + [BUILD-SYSTEM.md](BUILD-SYSTEM.md) only.
+- **Blocked-by:** none. **Blocks:** none. *decompose on pull*
+
+### P42 · Generated IaC  🟠  (was W7)
+- **Outcome:** Terraform generated for [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) **Stage 2** (default);
+  Stage 3 and a sovereign/air-gapped variant behind flags. Stage 1 stays compose-level.
+- **Outer lines:** region and residency are variables, never branches.
+- **Blocked-by:** none. **Blocks:** P45's air-gap install path. *decompose on pull*
+
+### P43 · Control-plane API  🟠  (was W10)
+- **Outcome:** a distinct **versioned management surface**, separate from the product API, under the
+  same contract gates: tenants/orgs lifecycle · users/roles/permissions · key administration ·
+  quotas/entitlements · feature flags · webhook config · audit query · metering reads · billing
+  state · service config.
+- **Outer lines:** **everything the admin UI can do goes through this API — no UI-only privileged
+  paths** (a UI-only path has no contract, no scope, no SDK and is invisible to the route-coverage
+  gate). Fine-grained scopes per resource+verb; **never a blanket `admin` scope**. A future MCP
+  management server is a *consumer* of this surface, not a second implementation.
+- **Blocked-by:** **P35** (its contract gates). **Blocks:** none. *decompose on pull*
+
+### P44 · Docs platform  🟠  (was W11)
+- **Outcome:** the **generated service's** product docs — Diátaxis-separated, tutorials per persona
+  (service developer / platform operator / API consumer). Reference is **generated** from the
+  OpenAPI contracts, capability manifests and settings schema; **authored reference for these is
+  forbidden** (a copy of a fact drifts the moment the fact changes).
+- **Outer lines:** static self-hostable output; docs build in CI with broken links and orphaned
+  pages failing the build. Tool: **Starlight** recommended on the [P8](PRINCIPLES.md) self-hostable
+  rule (SSG + Pagefind = search with zero running infra); ⚠ versioned-docs-per-release is native to
+  neither candidate — re-verify before committing. This repo's own `docs/` set stays markdown-in-repo.
+- **Blocked-by:** **P35** (generated reference needs gated contracts). **Blocks:** none. *decompose on pull*
+
+### P45 · Enterprise lifecycle  🟠  (was W12)
+- **Outcome:** day-0 install (air-gap path; boot-time config validation naming **every** missing
+  setting in one pass; `SecretsPort` per **P14**), day-1 operation (HA statelessness proven by a
+  two-replica CI leg; graceful shutdown + readiness gates; sanitized support-bundle export reusing
+  the F5 redaction key set), day-2 upgrade (stable/edge channels; `MIGRATION.md` mandatory on majors,
+  enforced by the release workflow; written deprecation timelines; SBOM **+ license report** as
+  release artifacts — the SBOM half already ships via P2c).
+- **Outer lines:** the **zero-downtime migration guarantee is blocked on the destructive-migration
+  gate (finding F8, open)** — asserting it before that gate exists would be prose-as-enforcement,
+  which [SECURITY-BASELINE.md](SECURITY-BASELINE.md) §0 rejects.
+- **Blocked-by:** **F8**, **P42** (air-gap path), **P14**. **Blocks:** none. *decompose on pull*
 
 ---
 

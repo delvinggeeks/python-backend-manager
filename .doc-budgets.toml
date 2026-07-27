@@ -1,0 +1,13 @@
+# Line budgets for the ALWAYS-READ document set.
+#
+# Every session reads these files in full, so their length is a tax on every session's context.
+# Budgeting them makes growth a decision instead of a drift: exceeding a budget fails CI, and the
+# only way past it is to raise the number in the same PR — which is the review moment, exactly as
+# adding a line to PUBLIC_ROUTES is.
+#
+# JIT documents (ROADMAP.md, SECURITY-BASELINE.md, the rest of docs/) are deliberately UNBUDGETED.
+# They are read on demand by the sessions that need them, so their length costs nothing by default,
+# and a ledger must be free to hold the work that actually exists.
+[budgets]
+"AGENTS.md" = 90
+"docs/PLATFORM-INTEGRATION.md" = 120

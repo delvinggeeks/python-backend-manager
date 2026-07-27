@@ -1,5 +1,8 @@
 # CURRENT-STATE.md — what the template is today (as of v0.18.0)
 
+> **Pointer:** for *what is shipped today*, read [COVERAGE-MATRIX.md](COVERAGE-MATRIX.md) —
+> the single home for that fact. This file is the point-in-time inventory as of the spec, kept
+> for historical context only and NOT maintained as a status source.
 > Inventory for the deep-research spec-hardening effort (Phase 0). Source of truth for
 > *what exists*; gaps and target state live in [GAP-ANALYSIS.md](GAP-ANALYSIS.md),
 > [ARCHITECTURE.md](ARCHITECTURE.md), and [ROADMAP.md](ROADMAP.md).
