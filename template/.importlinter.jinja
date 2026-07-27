@@ -1,5 +1,8 @@
 [importlinter]
 root_package = app
+# Needed for the AI-SDK contract below: forbidding an EXTERNAL package requires import-linter to
+# resolve imports beyond the root package.
+include_external_packages = True
 
 [importlinter:contract:core-foundation]
 name = core is the foundation layer (must not import the api or the composition root)
@@ -57,3 +60,15 @@ forbidden_modules =
     app.email.adapters
 allow_indirect_imports = true
 {% endif %}
+
+[importlinter:contract:ai-sdks-only-at-the-edge]
+name = only the ai adapter layer may import a model-provider SDK
+type = forbidden
+source_modules =
+    app
+forbidden_modules =
+    anthropic
+    openai
+# TEMPORARY — deleted by W1; the ai/ module's adapter layer becomes the only legal import site.
+ignore_imports =
+    app.agents.example_agent -> anthropic

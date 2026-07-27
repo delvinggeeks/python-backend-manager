@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi_users.password import PasswordHelper
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 {% if include_api_keys %}
 from app.api_keys.models import ApiKey
@@ -168,3 +168,60 @@ async def test_user_list_page_redacts_password_hash(client: AsyncClient) -> None
     assert r.status_code == 200
     assert "root3@example.com" in r.text  # the row renders ...
     assert hashed not in r.text  # ... but the stored password hash is never in the HTML
+
+
+async def test_admin_session_cookie_is_hardened(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The admin panel is this service's one cookie-authenticated surface, so its cookie carries
+    the flags a session cookie needs — asserted with PRODUCTION settings active, since that is the
+    environment where the missing flag would matter.
+
+    sqladmin forwards session kwargs to Starlette's SessionMiddleware, whose `https_only` defaults
+    to False. Without this, a full superuser session ships without `Secure`.
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    try:
+        from app.main import create_app
+
+        prod_app = create_app()
+        await _seed_user("cookie@example.com", superuser=True)
+        transport = ASGITransport(app=prod_app)
+        async with AsyncClient(transport=transport, base_url="https://test") as ac:
+            r = await ac.post(
+                "/admin/login", data={"username": "cookie@example.com", "password": _PASSWORD}
+            )
+        cookie = r.headers.get("set-cookie", "")
+        assert cookie, f"admin login set no cookie (status {r.status_code})"
+        lowered = cookie.lower()
+        assert "httponly" in lowered, f"admin session cookie is not HttpOnly: {cookie}"
+        assert "samesite=lax" in lowered, f"admin session cookie has no explicit SameSite: {cookie}"
+        assert "secure" in lowered, (
+            f"admin session cookie is not Secure in production: {cookie} — a full superuser "
+            "session that will travel over any plaintext hop"
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_admin_session_cookie_still_works_over_plain_http_in_dev(
+    client: AsyncClient,
+) -> None:
+    """`Secure` is production-only on purpose: a dev stack on plain http must still sign in.
+
+    Marking the cookie Secure unconditionally would silently break every local login, which is the
+    kind of hardening that gets reverted rather than fixed.
+    """
+    await _seed_user("devcookie@example.com", superuser=True)
+    r = await client.post(
+        "/admin/login", data={"username": "devcookie@example.com", "password": _PASSWORD}
+    )
+    cookie = r.headers.get("set-cookie", "")
+    assert cookie, "dev login set no cookie"
+    assert "secure" not in cookie.lower(), (
+        f"cookie is Secure in a local (http) environment: {cookie} — the browser would drop it"
+    )
+    assert "httponly" in cookie.lower()
+    # And the session actually admits the user to the panel.
+    assert (await client.get("/admin/")).status_code == 200

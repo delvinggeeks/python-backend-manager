@@ -30,7 +30,16 @@ def mount_admin(app: FastAPI) -> Admin:
     admin = Admin(
         app,
         engine,
-        authentication_backend=AdminAuth(secret_key=settings.users_jwt_secret),
+        # sqladmin forwards these straight to Starlette's SessionMiddleware. Passing them
+        # explicitly matters: the defaults leave `https_only=False`, so the panel's session cookie
+        # — a full superuser session — would ship without `Secure` and travel over any plaintext
+        # hop. `httponly` is not a parameter; Starlette always sets it, asserted in test_admin.py
+        # so the guarantee is pinned rather than assumed.
+        authentication_backend=AdminAuth(
+            secret_key=settings.users_jwt_secret,
+            https_only=settings.is_production,
+            same_site="lax",
+        ),
         title=f"{settings.app_name} admin",
     )
     register_model_views(admin)

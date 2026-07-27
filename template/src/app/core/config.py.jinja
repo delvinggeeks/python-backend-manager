@@ -24,6 +24,21 @@ class Settings(BaseSettings):
     environment: Literal["local", "staging", "production"] = "local"
     debug: bool = False
     log_json: bool = Field(default=False, description="Emit structured JSON logs.")
+    # Field names whose VALUES are masked before a log line reaches the sink, at any nesting depth.
+    # Matching is case-insensitive substring: "token" also masks "access_token", "refresh_token".
+    # Redaction lives in the processor chain, not at call sites — a call-site rule fails the first
+    # time someone logs an object they did not write.
+    log_scrub_keys: list[str] = Field(
+        default_factory=lambda: [
+            "password",
+            "token",
+            "secret",
+            "authorization",
+            "api_key",
+            "email",
+        ],
+        description="Field names whose values are redacted from logs (case-insensitive substring).",
+    )
 
     # --- Server ---
     host: str = "0.0.0.0"  # noqa: S104  (binding all interfaces is intentional in a container)
