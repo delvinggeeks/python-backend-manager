@@ -136,6 +136,17 @@ async def test_agent_endpoint_rejects_an_unauthenticated_call(client) -> None:
 {% endif %}
 
 
+def _first_path_arg(node: object) -> str:
+    """The first string positional argument of a call — a route decorator's path."""
+    import ast
+
+    assert isinstance(node, ast.Call)
+    for arg in node.args:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+    return "<unknown>"
+
+
 def test_no_unapproved_schema_exclusions() -> None:
     """A hidden route bypasses the walker entirely, so hiding one is itself gated.
 
@@ -163,10 +174,7 @@ def test_no_unapproved_schema_exclusions() -> None:
             )
             if not hides:
                 continue
-            route = next(
-                (a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)),
-                "<unknown>",
-            )
+            route = _first_path_arg(node)
             key = f"{rel}::{route}"
             if key not in APPROVED_SCHEMA_EXCLUSIONS:
                 unapproved.append(f"{key} (line {node.lineno})")
@@ -194,10 +202,7 @@ def test_approved_schema_exclusions_are_not_stale() -> None:
                 and kw.value.value is False
                 for kw in node.keywords
             ):
-                route = next(
-                    (a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)),
-                    "<unknown>",
-                )
+                route = _first_path_arg(node)
                 present.add(f"{rel}::{route}")
 
     stale = sorted(set(APPROVED_SCHEMA_EXCLUSIONS) - present)
