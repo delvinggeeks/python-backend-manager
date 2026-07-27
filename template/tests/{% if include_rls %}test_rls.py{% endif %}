@@ -487,6 +487,21 @@ RLS_EXEMPT_TABLES: dict[str, str] = {
         "under a single-tenant GUC an RLS policy would return zero rows and break org listing. "
         "Isolation for memberships is enforced at the application layer by get_current_membership."
     ),
+    # --- DEBT, not design. Tracked as ledger ticket P4-b, which deletes these three entries. ---
+    # These carry organization_id and SHOULD be under RLS; they predate this gate, which is what
+    # made the gap invisible. Listed rather than silently missing, so the omission is a visible
+    # decision with an owner instead of an absence nobody can see.
+    "usage_events": (
+        "DEBT (P4-b): metering's append-only meter ledger. Deferred when metering shipped; the "
+        "app-level org scoping is the only isolation layer today."
+    ),
+    "invoices": (
+        "DEBT (P4-b): rated invoices per org. Same deferral as usage_events."
+    ),
+    "customer_wallets": (
+        "DEBT (P4-b): prepaid balance per org. Same deferral; note wallet_transactions has no "
+        "organization_id at all, which is the design decision P4-b resolves."
+    ),
 }
 
 
