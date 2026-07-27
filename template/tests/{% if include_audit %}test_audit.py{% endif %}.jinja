@@ -153,7 +153,6 @@ async def test_flat_audit_log_is_append_only(client: AsyncClient) -> None:
     r = await client.delete("/audit", headers=headers)
     assert r.status_code == 405
 {% endif %}
-
 {% if not (include_users or include_admin or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks) %}
 
 
