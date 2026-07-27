@@ -40,6 +40,16 @@ When a convention isn't obvious, **read this file — don't guess.**
 - **Subagents are read-only.** `template-validator`, `build-judge`, `dependency-auditor`,
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
+- **GC Friday — a repeated mistake becomes a gate, never a reminder.** A standing weekly session
+  walks the week's corrections and asks one question of each: *could this have been made impossible
+  rather than merely discouraged?* Where the answer is yes, the output is a hook, a CI gate, a lint
+  rule or a script — **never a doc line**, because a doc line is the thing that already failed. This
+  is [PRINCIPLES.md](docs/PRINCIPLES.md)'s discipline and
+  [SECURITY-BASELINE.md](docs/SECURITY-BASELINE.md) §0's position doctrine applied to process rather
+  than to code. Already harvested this way: `.claude/hooks/staged-scope.sh`, `scripts/leg-check.sh`,
+  and the `ci-ok` gate. **Caveat, stated so it isn't mistaken for coverage:** the cadence itself is a
+  convention, and conventions are exactly what this repo distrusts — it recurs only as long as
+  someone runs it.
 - **Two automation layers — don't confuse them:** dependency freshness
   (`uv lock --upgrade` + Renovate, per service and for this repo) vs template propagation
   (`copier update`, which pulls template changes into already-generated services).
