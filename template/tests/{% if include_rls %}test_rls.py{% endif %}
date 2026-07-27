@@ -467,3 +467,84 @@ async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> No
         await owner.execute(_INIT_SQL.read_text())
     finally:
         await owner.close()
+
+# ---------------------------------------------------------------------------------------------
+# RLS COVERAGE over the REAL tenant tables.
+#
+# The tests above prove the RLS MECHANISM against synthetic probe tables. They cannot notice a real
+# tenant table that was created without a policy — and a table added without one is invisible
+# exactly the way an unauthenticated route was, before the route-coverage gate existed.
+#
+# This gate enumerates every table carrying `organization_id` from SQLAlchemy metadata and requires
+# each to be policy-protected AND force-enabled, or to appear below with a stated reason.
+# ---------------------------------------------------------------------------------------------
+
+# Tables that carry `organization_id` and are deliberately NOT under RLS. Adding a line here is the
+# review moment: it is the only way to ship a tenant table without a policy.
+RLS_EXEMPT_TABLES: dict[str, str] = {
+    "memberships": (
+        "Cross-tenant BY DESIGN. `GET /orgs` lists the orgs a user belongs to, which spans tenants; "
+        "under a single-tenant GUC an RLS policy would return zero rows and break org listing. "
+        "Isolation for memberships is enforced at the application layer by get_current_membership."
+    ),
+}
+
+
+async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
+    """Every `organization_id`-bearing table has a policy and FORCE, or is exempted by name.
+
+    Metadata is the source of truth for "is this a tenant table", so a new model with an
+    `organization_id` column is covered the moment it exists — nobody has to remember to add it.
+    """
+    from app.db.models import Base
+
+    tenant_tables = {
+        name for name, table in Base.metadata.tables.items() if "organization_id" in table.c
+    }
+    assert tenant_tables, "no organization_id-bearing tables found — the enumeration is broken"
+
+    owner_async = "postgresql+asyncpg://" + postgres_dsn.split("://", 1)[1]
+    migrate = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": owner_async},
+        capture_output=True,
+        text=True,
+    )
+    assert migrate.returncode == 0, f"alembic upgrade head failed:\n{migrate.stderr}"
+
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        with_policy = {
+            r["tablename"] for r in await conn.fetch(
+                "SELECT DISTINCT tablename FROM pg_policies WHERE schemaname = 'public'"
+            )
+        }
+        forced = {
+            r["relname"] for r in await conn.fetch(
+                "SELECT relname FROM pg_class WHERE relrowsecurity AND relforcerowsecurity"
+            )
+        }
+    finally:
+        await conn.close()
+
+    unprotected = sorted(
+        table
+        for table in tenant_tables
+        if table not in RLS_EXEMPT_TABLES and not (table in with_policy and table in forced)
+    )
+    assert not unprotected, (
+        f"these tables carry organization_id but are not protected by FORCE'd RLS: {unprotected}. "
+        "Either add them to the migration's _TENANT_TABLES, or add them to RLS_EXEMPT_TABLES with "
+        "the reason they are deliberately cross-tenant."
+    )
+
+
+async def test_rls_exemptions_are_not_stale(postgres_dsn: str) -> None:
+    """An exemption outliving its table pre-approves the next table to reuse the name."""
+    from app.db.models import Base
+
+    tenant_tables = {
+        name for name, table in Base.metadata.tables.items() if "organization_id" in table.c
+    }
+    stale = sorted(name for name in RLS_EXEMPT_TABLES if name not in tenant_tables)
+    assert not stale, f"RLS_EXEMPT_TABLES names tables this service does not have: {stale}"
