@@ -1,0 +1,17 @@
+# Pre-commit hooks for the TEMPLATE REPOSITORY itself.
+# (The hooks that ship INTO generated services live in template/.pre-commit-config.yaml.)
+repos:
+  - repo: local
+    hooks:
+      # A construct can be valid when a {% if %} block renders and malformed when it does not, so
+      # the template looks fine and only one capability combination breaks. This renders each
+      # staged *.py.jinja with every gate OFF and checks the result.
+      #
+      # FAST-FEEDBACK SHORTCUT, not a complete gate: it covers exactly one combination. The
+      # generate-matrix in CI remains the complete gate for this class — see scripts/leg-check.sh.
+      - id: micro-render-check
+        name: micro-render (gated blocks off) must stay format-clean
+        entry: uv run --no-project --with jinja2 --with ruff python scripts/micro-render-check.py
+        language: system
+        files: \.py\.jinja$
+        pass_filenames: true
