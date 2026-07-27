@@ -3,7 +3,9 @@
 Org-scoped (``GET /orgs/{org_id}/audit``), authorised by the caller's membership in
 ``{org_id}``{% if include_rbac %} and gated to the ``admin`` role or higher{% endif %}. Results are paginated, newest first.
 {% else %}
-{% if include_users or include_admin %}Flat (``GET /audit``), requiring an authenticated user. Results are paginated, newest first.{% else %}No read endpoint: with no identity capability there is nothing to authenticate a reader with, so the log is write-only (``record`` still appends).{% endif %}
+{% if include_users or include_admin %}Flat (``GET /audit``), requiring an authenticated user. Results are
+paginated, newest first.{% else %}No read endpoint — with no identity capability there is nothing to
+authenticate a reader with, so the log is write-only (``record`` still appends).{% endif %}
 {% endif %}"""
 
 from __future__ import annotations
