@@ -496,6 +496,12 @@ RLS_EXEMPT_TABLES: dict[str, str] = {
         "app-level org scoping is the only isolation layer today."
     ),
     "invoices": ("DEBT (P4-b): rated invoices per org. Same deferral as usage_events."),
+    "outbox_events": (
+        "DEBT (P4-b): the transactional outbox carries organization_id and predates this gate. "
+        "Protecting it is LOW RISK and was verified as such while writing this list: the relay "
+        "already opens PrivilegedSessionFactory (BYPASSRLS), so a policy cannot starve it, and the "
+        "write path runs inside the caller's tenant transaction."
+    ),
     "customer_wallets": (
         "DEBT (P4-b): prepaid balance per org. Same deferral; note wallet_transactions has no "
         "organization_id at all, which is the design decision P4-b resolves."
@@ -584,6 +590,7 @@ async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
 # absent, not stale — only a table whose OWNING MODULE is present can have gone away.
 _EXEMPTION_OWNER: dict[str, str] = {
     "memberships": "app.tenancy.models",
+    "outbox_events": "app.webhooks.models",
     "usage_events": "app.metering.models",
     "invoices": "app.metering.models",
     "customer_wallets": "app.metering.models",
