@@ -1,0 +1,116 @@
+name: GC Friday
+
+# Harvest inventory for the weekly guardrail session (see AGENTS.md).
+#
+# This workflow GATHERS EVIDENCE ONLY. It opens or refreshes one labelled issue and does nothing
+# else: no commits, no PRs, no edits. The mechanical half of GC Friday is the trigger and the
+# inventory; the judgement — deciding which corrections deserve a guardrail — stays human-invoked,
+# because that judgement is the entire value of the session and is not automatable.
+
+on:
+  schedule:
+    # 03:30 UTC Friday = 09:00 IST Friday (the repo's timezone is Asia/Kolkata).
+    - cron: "30 3 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  harvest:
+    name: Gather the week's corrections
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0   # git log over the whole window
+
+      - name: Build the inventory
+        id: inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Window: since the previous GC issue, else the last 7 days. Using the previous issue as
+          # the boundary means a skipped week is absorbed rather than silently dropped.
+          since=$(gh issue list --repo "$REPO" --label gc-friday --state all \
+                    --limit 1 --json createdAt --jq '.[0].createdAt // empty')
+          if [ -z "$since" ]; then
+            since=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          fi
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          echo "Window opens at $since"
+
+          {
+            echo "Harvest window: **$since** → now."
+            echo
+            echo "> Evidence only. Nothing here is a decision — the session that consumes this issue"
+            echo "> asks of each item: *could this have been made impossible rather than discouraged?*"
+            echo
+
+            echo "## Merged PRs"
+            gh pr list --repo "$REPO" --state merged --limit 100 \
+               --search "merged:>=${since%%T*}" \
+               --json number,title,mergedAt \
+               --jq '.[] | "- #\(.number) \(.title)"' || echo "_none_"
+            echo
+
+            echo "## Correction-marked commits"
+            echo "<sub>Commits whose message carries a correction marker: \`fix:\`, \`revert\`, \"my error\", \"caught by\".</sub>"
+            echo
+            git log --since="$since" --regexp-ignore-case \
+                    --grep='^fix:' --grep='revert' --grep='my error' --grep='caught by' \
+                    --pretty='- `%h` %s' || true
+            echo
+
+            echo "## AGENTS.md changes this window"
+            if git log --since="$since" --oneline -- AGENTS.md | grep -q .; then
+              echo '```diff'
+              git log --since="$since" -p --unified=1 -- AGENTS.md | head -200
+              echo '```'
+            else
+              echo "_unchanged_"
+            fi
+            echo
+
+            echo "## Red-then-green commits"
+            echo "<sub>A commit whose CI failed and later passed — each one is a gate that fired, or a gate that was missing.</sub>"
+            echo
+            gh run list --repo "$REPO" --limit 200 \
+               --json headSha,conclusion,displayTitle,createdAt \
+               --jq "[.[] | select(.createdAt >= \"$since\")]
+                     | group_by(.headSha)
+                     | map(select(any(.[]; .conclusion==\"failure\") and any(.[]; .conclusion==\"success\")))
+                     | .[] | \"- \\(.[0].headSha[0:8]) \\(.[0].displayTitle)\"" || echo "_none_"
+            echo
+
+            echo "---"
+            echo "<sub>Opened by \`.github/workflows/gc-friday.yml\`. The trigger and this inventory are"
+            echo "mechanical; the judgement is invoked. Close this issue when the harvest is done.</sub>"
+          } > /tmp/body.md
+
+          echo "Inventory built: $(wc -l < /tmp/body.md) lines"
+
+      - name: Open or refresh the GC Friday issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create gc-friday --repo "$REPO" --color 0E8A16 \
+             --description "Weekly guardrail harvest" 2>/dev/null || true
+
+          title="GC Friday — harvest for $(date -u +%Y-%m-%d)"
+          open_issue=$(gh issue list --repo "$REPO" --label gc-friday --state open \
+                         --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$open_issue" ]; then
+            # A still-open harvest means last week's was not consumed. Refresh it rather than
+            # stacking issues, so the backlog stays one item instead of an accusing pile.
+            gh issue edit "$open_issue" --repo "$REPO" --title "$title" --body-file /tmp/body.md
+            echo "Refreshed #$open_issue"
+          else
+            gh issue create --repo "$REPO" --label gc-friday --title "$title" --body-file /tmp/body.md
+          fi
