@@ -1,0 +1,31 @@
+# gitleaks configuration — secret detection for this service.
+#
+# Two positions, deliberately: a pre-commit hook (fast, local, and BYPASSABLE with --no-verify)
+# and a CI job (not bypassable). The hook exists to catch a mistake before it becomes history;
+# the CI job is the control.
+[extend]
+useDefault = true   # inherit gitleaks' provider rule-pack (AWS, Stripe, GitHub, GCP, Slack, ...)
+
+[allowlist]
+description = "Placeholders that are meant to be committed."
+# THE RULE: a placeholder is allowed only if it is NOT credential-shaped. Every regex here is
+# anchored (^...$), so the whole value must be the placeholder — a real secret that merely
+# CONTAINS one of these words is still caught.
+#
+# This deliberately rejects format-valid "examples" such as AWS's documented AKIAIOSFODNN7EXAMPLE:
+# a value indistinguishable in shape from a live credential cannot be distinguished from one by a
+# scanner either, so `.env.example` files should carry obviously-fake words instead. That choice
+# is what makes the allowlist safe to extend later.
+regexes = [
+  '''(?i)^change[-_]?me$''',
+  '''(?i)^your[-_ ]?(key|secret|token|password)[-_ ]?here$''',
+  '''(?i)^(placeholder|dummy|redacted|fake|todo|unset|none)$''',
+  '''^(x{4,}|\.{3,}|<[^>]+>)$''',
+  '''^sk_test_[A-Za-z0-9]+$''',            # provider TEST-mode keys are not live credentials
+  '''^whsec_test[A-Za-z0-9]*$''',
+  '''^CHANGE_ME_dev_only_secret_override_in_prod$''',   # the template's own dev default
+]
+paths = [
+  '''(^|/)uv\.lock$''',            # dependency hashes, not secrets
+  '''(^|/)\.gitleaks\.toml$''',    # this file names the formats it must detect
+]

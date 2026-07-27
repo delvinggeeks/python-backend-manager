@@ -12,9 +12,9 @@ from opentelemetry import trace
 {% endif %}
 
 from app.core.config import get_settings
-
-
 {% if include_observability %}
+
+
 def add_trace_context(
     _logger: object, _method_name: str, event_dict: structlog.typing.EventDict
 ) -> structlog.typing.EventDict:
@@ -29,8 +29,49 @@ def add_trace_context(
         event_dict["span_id"] = format(ctx.span_id, "016x")
     return event_dict
 
-
 {% endif %}
+
+REDACTED = "[REDACTED]"
+
+
+def _scrub(value: object, keys: tuple[str, ...]) -> object:
+    """Recursively mask values whose FIELD NAME matches a sentinel, preserving the structure.
+
+    Containers keep their type (a dict stays a dict, a list stays a list) so a scrubbed line is
+    still the shape the caller logged; only the sensitive leaves are replaced. Matching is
+    case-insensitive substring, so ``token`` covers ``access_token`` and ``refresh_token`` without
+    needing every variant enumerated.
+    """
+    if isinstance(value, dict):
+        scrubbed: dict[object, object] = {}
+        for key, item in value.items():
+            name = str(key).lower()
+            if any(sentinel in name for sentinel in keys):
+                scrubbed[key] = REDACTED
+            else:
+                scrubbed[key] = _scrub(item, keys)
+        return scrubbed
+    if isinstance(value, list):
+        return [_scrub(item, keys) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub(item, keys) for item in value)
+    return value
+
+
+def scrub_sensitive(
+    _logger: object, _method: str, event_dict: structlog.typing.EventDict
+) -> structlog.typing.EventDict:
+    """structlog processor: redact sensitive values before anything renders them.
+
+    Placed early in the chain, ahead of every renderer, so no formatting path can bypass it —
+    including the console renderer used in development, where a leaked value is just as leaked.
+    """
+    keys = tuple(key.lower() for key in get_settings().log_scrub_keys)
+    if not keys:
+        return event_dict
+    return _scrub(event_dict, keys)  # type: ignore[return-value]
+
+
 def configure_logging() -> None:
     """Configure structlog: shared processors, level, and JSON-vs-console rendering."""
     settings = get_settings()
@@ -38,6 +79,8 @@ def configure_logging() -> None:
 
     shared_processors: list[structlog.typing.Processor] = [
         structlog.contextvars.merge_contextvars,
+        # Ahead of every renderer: redaction must not depend on which one is active.
+        scrub_sensitive,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),

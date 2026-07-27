@@ -11,3 +11,10 @@ repos:
     rev: 0.11.32
     hooks:
       - id: uv-lock   # keeps uv.lock in sync with pyproject.toml
+
+  # Secret scanning, position 1 of 2. This hook is BYPASSABLE (`git commit --no-verify`), so it is
+  # a fast local catch, not the control — the blocking gate is the CI job in .github/workflows.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
