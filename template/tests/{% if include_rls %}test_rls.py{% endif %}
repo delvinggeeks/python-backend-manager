@@ -595,6 +595,14 @@ async def test_rls_exemptions_are_not_stale(postgres_dsn: str) -> None:
     """An exemption outliving its table pre-approves the next table to reuse the name."""
     import importlib.util
 
+    def _module_present(name: str) -> bool:
+        # find_spec RAISES ModuleNotFoundError when a parent package is absent, rather than
+        # returning None — so a capability this render does not ship raises rather than reports.
+        try:
+            return importlib.util.find_spec(name) is not None
+        except ModuleNotFoundError:
+            return False
+
     tenant_tables = _tenant_tables_from_metadata()
     assert set(_EXEMPTION_OWNER) == set(RLS_EXEMPT_TABLES), (
         "every exemption needs an owning module in _EXEMPTION_OWNER, or staleness cannot be judged"
@@ -603,7 +611,7 @@ async def test_rls_exemptions_are_not_stale(postgres_dsn: str) -> None:
         name
         for name in RLS_EXEMPT_TABLES
         if name not in tenant_tables
-        and importlib.util.find_spec(_EXEMPTION_OWNER[name]) is not None
+        and _module_present(_EXEMPTION_OWNER[name])
     )
     assert not stale, (
         f"RLS_EXEMPT_TABLES names tables this service has the module for but no longer defines: "
