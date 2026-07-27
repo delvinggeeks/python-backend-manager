@@ -254,10 +254,12 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 | 6 | **Admin session cookie carries its flags** | **middleware** | `src/app/admin/setup.py` passes `https_only=settings.is_production`, `same_site="lax"` through sqladmin to Starlette's `SessionMiddleware`, whose `https_only` defaults to **False**; `tests/test_admin.py::test_admin_session_cookie_is_hardened` asserts `Secure`/`HttpOnly`/`SameSite` **with production settings active**, and a companion test asserts dev-over-http still signs in — hardening that breaks local login gets reverted rather than fixed |
 | 11 | **PII redaction is a processor, not a call-site habit** | **middleware** | `src/app/core/logging.py::scrub_sensitive`, inserted ahead of **every** renderer so no formatting path bypasses it; recursive to any depth, container types preserved, key set from `settings.log_scrub_keys` (defaults: password, token, secret, authorization, api_key, email — matched case-insensitively as substrings, so `token` covers `access_token`). `tests/test_log_scrubbing.py` asserts on **rendered** output, including that non-sensitive fields survive verbatim |
 | 4, 7 | **Provider SDKs only at the adapter edge** | **policy/CI** (import-linter) | `.importlinter` contract *only the ai adapter layer may import a model-provider SDK*, with exactly one `ignore_imports` entry — `app.agents.example_agent -> anthropic`, marked TEMPORARY and deleted by W1. The rule lands before the module it governs, so W1 tightens the contract by **deletion** rather than by someone remembering to add it |
+| 3 | **Dev matches production for the privileged role** | **environment** (the role exists) | `template/scripts/init-db/01-privileged-role.sql`, mounted by `compose.yaml` into `/docker-entrypoint-initdb.d`; `tests/test_rls.py::test_compose_provisions_a_real_bypassrls_role` asserts the created role has `BYPASSRLS`, can log in, and that re-running the script is idempotent |
 
 ### Open follow-ups
 
-- **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
+- ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED** — the local stack now
+  provisions a real `BYPASSRLS` role. Original note: `database_url_privileged` still falls back to
   `database_url`, so in a default local environment the "privileged" session is the ordinary app
   role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
   dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
