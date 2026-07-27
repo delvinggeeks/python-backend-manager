@@ -13,6 +13,13 @@ A ledger that keeps its completed items becomes an archive, and an archive is re
 **P1–P8 shipped through v0.35.0 and have left this file.** What is shipped is listed once, in
 [COVERAGE-MATRIX.md](COVERAGE-MATRIX.md).
 
+**Exits are decided per phase, on shipped evidence — never by deleting a grouping.** Wave headings
+group by *theme*; ship status accrues per *phase*. The two do not align, and assuming they do loses
+work or keeps it. P8 shipped as v0.35.0 but sits under the Wave 4 heading, so removing Waves 0–3
+left it behind; it was caught by checking phases against the changelog, not by reading the outline.
+Before removing anything, confirm that phase's evidence in [CHANGELOG.md](../CHANGELOG.md) or
+[SECURITY-BASELINE.md](SECURITY-BASELINE.md) §13 individually.
+
 **Two levels, deliberately.**
 
 - **Phases are COARSE** — outcome, hard outer lines, blocks/blocked-by. No task detail. A phase is a
