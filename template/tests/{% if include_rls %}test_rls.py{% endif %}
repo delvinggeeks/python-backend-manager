@@ -494,32 +494,32 @@ RLS_EXEMPT_TABLES: dict[str, str] = {
 def _tenant_tables_from_metadata() -> set[str]:
     """Every table carrying `organization_id`, from SQLAlchemy metadata.
 
-    The model modules are imported for their side effect of registering tables on the shared
-    ``Base.metadata`` — the same reason ``migrations/env.py`` imports them. Metadata is the right
-    source of truth here: a new model with an `organization_id` column is covered the moment it
-    exists, with nobody having to remember to add it to a list.
-    """
-{% if include_api_keys %}
-    from app.api_keys import models as _api_keys_models  # noqa: F401
-{% endif %}
-{% if include_audit %}
-    from app.audit import models as _audit_models  # noqa: F401
-{% endif %}
-{% if include_billing %}
-    from app.billing import models as _billing_models  # noqa: F401
-{% endif %}
-    from app.db.models import Base
-{% if include_metering %}
-    from app.metering import models as _metering_models  # noqa: F401
-{% endif %}
-    from app.tenancy import models as _tenancy_models  # noqa: F401
-{% if include_webhooks %}
-    from app.webhooks import models as _webhooks_models  # noqa: F401
-{% endif %}
+    Model modules are imported for their side effect of registering tables on the shared
+    ``Base.metadata`` — the same reason ``migrations/env.py`` imports them. Absent modules are
+    skipped, so this works in every capability combination without jinja: THIS FILE'S PATH is
+    gated, but its content is copied verbatim, so a jinja tag here would land literally.
 
-    return {
-        name for name, table in Base.metadata.tables.items() if "organization_id" in table.c
-    }
+    Metadata is the right source of truth: a new model with an `organization_id` column is covered
+    the moment it exists, with nobody having to remember to add it to a list.
+    """
+    import contextlib
+    import importlib
+
+    from app.db.models import Base
+
+    for module in (
+        "app.api_keys.models",
+        "app.audit.models",
+        "app.billing.models",
+        "app.metering.models",
+        "app.tenancy.models",
+        "app.webhooks.models",
+    ):
+        with contextlib.suppress(ImportError):
+            importlib.import_module(module)
+
+    return {name for name, table in Base.metadata.tables.items() if "organization_id" in table.c}
+
 
 async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
     """Every `organization_id`-bearing table has a policy and FORCE, or is exempted by name.
