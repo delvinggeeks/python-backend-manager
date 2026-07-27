@@ -483,6 +483,7 @@ async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> No
     finally:
         await owner.close()
 
+
 # ---------------------------------------------------------------------------------------------
 # RLS COVERAGE over the REAL tenant tables.
 #
