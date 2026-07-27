@@ -89,24 +89,32 @@ organization_id` still can't read another tenant's rows. Postgres-only — a no-
 - `DATABASE_URL` → a least-privilege, **RLS-bound** role — the per-tenant request path.
 - `DATABASE_URL_PRIVILEGED` → a **`BYPASSRLS`** role for flows that legitimately span tenants:
   API-key auth, the admin panel, inbound provider webhooks, and background workers — including the
-  outbox relay, which reads every tenant's endpoints. Leave it unset in dev and both use
-  `DATABASE_URL` (`app.tenancy.rls` has the details). **In production point it at a real `BYPASSRLS`
-  role:** if it resolves to the RLS-bound role the relay reads zero endpoints and silently drops
-  every webhook (the relay has no tenant in context, so the policy hides all rows).
+  outbox relay, which reads every tenant's endpoints.
 
-Provision once (as the DB owner; run migrations as the owner, the app connects as these roles):
+**The local stack provisions it for you.** `compose.yaml` mounts
+`scripts/init-db/01-privileged-role.sql`, which creates an `app_privileged` role with `BYPASSRLS` on
+first boot — so dev matches production instead of falling back to the app role. Point
+`DATABASE_URL_PRIVILEGED` at it. If the role it resolves to lacks `BYPASSRLS`, the service raises
+`PrivilegedRoleMisconfigured` on first privileged use rather than degrading to empty results.
+
+For production, provision the same two roles with real secrets (as the DB owner; run migrations as
+the owner, the app connects as these roles) — `scripts/init-db/01-privileged-role.sql` is the
+reference for the privileged half:
 
 ```sql
-CREATE ROLE app_rls     LOGIN PASSWORD '...';                -- DATABASE_URL
-CREATE ROLE app_trusted LOGIN PASSWORD '...' BYPASSRLS;      -- DATABASE_URL_PRIVILEGED
-GRANT USAGE ON SCHEMA public TO app_rls, app_trusted;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rls, app_trusted;
+CREATE ROLE app_rls        LOGIN PASSWORD '...';                -- DATABASE_URL
+CREATE ROLE app_privileged LOGIN PASSWORD '...' BYPASSRLS;      -- DATABASE_URL_PRIVILEGED
+GRANT USAGE ON SCHEMA public TO app_rls, app_privileged;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rls, app_privileged;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rls, app_trusted;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rls, app_privileged;
 ```
 
-Use **session-mode** pooling (PgBouncer `session`, not `transaction`) so the session-level GUC
-stays attached to the backend connection for the whole request.
+**Transaction-mode pooling is safe.** The tenant context is set with `set_config(..., true)` from a
+transaction-begin hook, so it is discarded when the transaction ends and can never be inherited by
+the next transaction on a recycled connection. (An earlier revision set it session-scoped and told
+you to use session-mode pooling to compensate; that is no longer necessary, and transaction mode is
+the better default.)
 {% endif %}
 {% if include_rbac %}
 ### Roles & permissions (RBAC)

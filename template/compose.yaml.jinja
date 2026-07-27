@@ -26,6 +26,12 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+{% if include_rls %}
+      # Applied on first boot of an empty volume: creates the BYPASSRLS role that
+      # DATABASE_URL_PRIVILEGED points at, so the local topology matches production instead of
+      # silently falling back to the app role. See scripts/init-db/01-privileged-role.sql.
+      - ./scripts/init-db:/docker-entrypoint-initdb.d:ro
+{% endif %}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U {{ project_slug | replace('-', '_') }}"]
       interval: 5s
