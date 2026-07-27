@@ -1,8 +1,7 @@
 # AGENTS.md — canonical conventions for the python_backend_manager repo
 
-This repo is a **Copier template** generating self-maintaining FastAPI backends. `template/` is the
-body rendered into each service (`*.jinja` rendered, everything else copied verbatim); the repo
-**root** is the template's own management surface. When a convention isn't obvious, read this file.
+How to operate this repo. *What* it is lives in [PLATFORM-INTEGRATION.md](docs/PLATFORM-INTEGRATION.md);
+`template/` is the rendered body (`*.jinja` rendered, the rest copied verbatim), root is management.
 
 ## Decision rules
 - **Adding a dependency → `uv add`, never `pip`.** The template's deps live in
@@ -35,15 +34,10 @@ body rendered into each service (`*.jinja` rendered, everything else copied verb
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
 - **GC Friday — a repeated mistake becomes a gate, never a reminder.** A standing weekly session
-  walks the week's corrections and asks one question of each: *could this have been made impossible
-  rather than merely discouraged?* Where the answer is yes, the output is a hook, a CI gate, a lint
-  rule or a script — **never a doc line**, because a doc line is the thing that already failed. This
-  is [PRINCIPLES.md](docs/PRINCIPLES.md)'s discipline and
-  [SECURITY-BASELINE.md](docs/SECURITY-BASELINE.md) §0's position doctrine applied to process rather
-  than to code. Already harvested this way: `.claude/hooks/staged-scope.sh`, `scripts/leg-check.sh`,
-  and the `ci-ok` gate. **Caveat, stated so it isn't mistaken for coverage:** the cadence itself is a
-  convention, and conventions are exactly what this repo distrusts — it recurs only as long as
-  someone runs it.
+  asks of each correction: *could this have been made impossible rather than discouraged?* Where
+  yes, the output is a hook, a CI gate or a lint rule — **never a doc line**, because a doc line is
+  the thing that already failed. Harvested so far: `.claude/hooks/staged-scope.sh`,
+  `scripts/leg-check.sh`, `ci-ok`.
 - **Two automation layers — don't confuse them:** dependency freshness
   (`uv lock --upgrade` + Renovate, per service and for this repo) vs template propagation
   (`copier update`, which pulls template changes into already-generated services).
@@ -93,5 +87,4 @@ Sessions that stay in the smart zone don't hallucinate. Tickets sized to session
 structurally, rather than by anyone remembering to stop.
 
 ## Where to look
-- `copier.yml` — the questions + computed extras · `template/AGENTS.md` — conventions that ship INTO
-  generated services · `README.md` — full pipeline + GitHub setup.
+`copier.yml` (questions + computed extras) · `template/AGENTS.md` (ships INTO services) · `README.md`.
