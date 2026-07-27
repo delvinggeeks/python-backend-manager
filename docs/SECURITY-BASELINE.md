@@ -235,6 +235,21 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 | 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
 | — | Local validation and CI **cannot drift** | **policy/CI** | `scripts/leg-check.sh` is the single definition of "a leg passed"; `.github/workflows/ci.yml` invokes that same script with the same arguments |
 | — | Slice branches **cannot absorb unrelated changes** | **environment** (agent harness) | `.claude/hooks/staged-scope.sh`, a PreToolUse guard refusing a commit whose staged paths fall outside `.claude/slice-scope` |
+| 4 | **No anonymously-readable audit log** | **environment** (the route does not exist) | `src/app/audit/router.py` mounts the flat `GET /audit` only under an identity capability; `tests/test_audit.py::test_audit_read_endpoint_is_not_mounted_without_an_identity_capability` asserts 404 otherwise. `record()` is unaffected — the log still appends, it just has no HTTP reader until a reader can be authenticated |
+
+> **Why this row is the one to point at.** The audit finding was not found by review, by threat
+> modelling, or by the engineer who wrote the module. It was found by the route-coverage gate **on
+> its first full-matrix run**, in a module **outside the slice being worked on**, in code that had
+> already shipped and been read. The flat `GET /audit` attached its auth dependency only under
+> `{% if include_users or include_admin %}`, so an audit-only service published its entire
+> append-only log — actor, action, target, JSON metadata, paginated — to anonymous callers.
+>
+> That is the argument of this whole document in one incident. A control's **position** is what
+> makes it real: the same defect had survived every prose-level protection available — a docstring
+> that described the endpoint as authenticated, a code review, and a passing test suite — because
+> none of them were *positioned* to notice a route that was never asked about. Nothing changed
+> about the team's care. What changed was that a gate now enumerates every route and requires an
+> answer for each one.
 
 ### Open follow-ups
 
