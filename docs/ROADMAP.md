@@ -90,6 +90,26 @@ and exited only once it merged.*
 - **Blocked-by:** none. **Blocks:** the GC Friday cadence, and the five gated-block instances that
   were to be posted into the harvest issue. **AFK.** **Sized:** yes.
 
+### LINT-1 · This repo's own `scripts/*.py` have no format or lint gate
+
+- **Deliverable:** a CI job that runs `ruff check` and `ruff format --check` over the **manager
+  repo's** Python — `scripts/` and any future root-level Python — and is required for merge.
+- **Evidence it is missing:** `.github/workflows/ci.yml:91` sets `working-directory: /tmp/generated`
+  for the lint step, so every `ruff` invocation in CI targets the **generated project**. Nothing has
+  ever checked this repo's own source. `ruff format --check scripts/` reports two files drifted:
+  `check-doc-budgets.py` and `micro-render-check.py`, both over-wrapped at 88 columns where root
+  `ruff.toml` sets `line-length = 100`. `ruff check scripts/` is clean, so this is format-only today
+  — which is exactly why it went unnoticed.
+- **Why it matters beyond tidiness:** `ruff.toml` exists at the root *specifically* to pin the format
+  hook to 100 columns, and the drift proves the hook alone does not hold it. Per §0, a config with no
+  gate behind it is prose — the position is `absent`, not `policy/CI`.
+- **Failing-test-first:** run `ruff format --check scripts/` and observe the two files above. That
+  output is the failing state; the fix is the gate, and the reformat is what the gate then demands.
+- **File set:** `.github/workflows/ci.yml` (a new job, added to `ci-ok`'s `needs` so a skip cannot
+  read as green), the two drifted files. Consider `scripts/` in the pre-commit config too — but the
+  hook is bypassable, so CI is the control and the hook is the convenience.
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one job, two reformats.
+
 ### DEV-1 · Narrow the settings Read deny-rule to real env files
 
 - **Deliverable:** `.claude/settings.json`'s `Read(./.env.*)` deny narrows so `.env.example` is
