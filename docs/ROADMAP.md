@@ -81,6 +81,14 @@ list rendered to 105 columns in the all-capabilities combination, the gated-bloc
 column route held up: nothing surfaced against it, so the pre-made decision stands as made. **GATE-1**
 files a fail-open found in P4-a's own enumeration while using it.*
 
+*`LINT-1` exits with its own PR. Its scope was **narrowed by measurement**: the plan implied linting
+this repo's Python wherever it lives, and an unscoped `ruff check .` reports 26 findings — 22 of them
+in `template/`, under rules that template's own `[tool.ruff]` deliberately configures away (14x
+`B008`, which it lists in `ignore`). Those files are already checked by the capability legs with the
+config that governs them, so the gate is scoped to `scripts/`; two gates disagreeing about one file
+is worse than one gate. Three of the four real findings were deliberate patterns made explicit
+(`check=False`, a reasoned `noqa`) rather than silenced, and the ruff version is pinned.*
+
 ### GATE-1 · The RLS enumeration fails open when a model's dependency is missing
 
 - **Deliverable:** a partially-failed import cannot silently shrink the set of tables the RLS
@@ -100,26 +108,6 @@ files a fail-open found in P4-a's own enumeration while using it.*
   absent capability and is fine to skip; anything else is a broken environment and should raise.
 - **File set:** `template/tests/{% if include_rls %}test_rls.py{% endif %}`.
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
-
-### LINT-1 · This repo's own `scripts/*.py` have no format or lint gate
-
-- **Deliverable:** a CI job that runs `ruff check` and `ruff format --check` over the **manager
-  repo's** Python — `scripts/` and any future root-level Python — and is required for merge.
-- **Evidence it is missing:** `.github/workflows/ci.yml:91` sets `working-directory: /tmp/generated`
-  for the lint step, so every `ruff` invocation in CI targets the **generated project**. Nothing has
-  ever checked this repo's own source. `ruff format --check scripts/` reports two files drifted:
-  `check-doc-budgets.py` and `micro-render-check.py`, both over-wrapped at 88 columns where root
-  `ruff.toml` sets `line-length = 100`. `ruff check scripts/` is clean, so this is format-only today
-  — which is exactly why it went unnoticed.
-- **Why it matters beyond tidiness:** `ruff.toml` exists at the root *specifically* to pin the format
-  hook to 100 columns, and the drift proves the hook alone does not hold it. Per §0, a config with no
-  gate behind it is prose — the position is `absent`, not `policy/CI`.
-- **Failing-test-first:** run `ruff format --check scripts/` and observe the two files above. That
-  output is the failing state; the fix is the gate, and the reformat is what the gate then demands.
-- **File set:** `.github/workflows/ci.yml` (a new job, added to `ci-ok`'s `needs` so a skip cannot
-  read as green), the two drifted files. Consider `scripts/` in the pre-commit config too — but the
-  hook is bypassable, so CI is the control and the hook is the convenience.
-- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one job, two reformats.
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 

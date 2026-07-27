@@ -48,9 +48,11 @@ def render_all_off(source: str) -> str | None:
     """Render with every variable undefined — falsy, so all gated blocks are absent."""
     try:
         return ENV.from_string(source).render()
-    except Exception:
+    except Exception:  # noqa: BLE001 — deliberately broad; see below
         # A template that cannot render standalone (macros, includes) is out of scope for a
-        # shortcut check; the leg matrix covers it.
+        # shortcut check; the leg matrix covers it. Catching narrowly would mean enumerating every
+        # way jinja can fail, and a NEW failure mode would then crash the commit hook rather than
+        # deferring to the complete gate — the opposite of what a fast-feedback shortcut should do.
         return None
 
 
@@ -58,9 +60,7 @@ def main(paths: list[str]) -> int:
     # A file inside a gated DIRECTORY (e.g. "{% if include_audit %}audit{% endif %}/x.py.jinja")
     # is only ever rendered when that gate is true, so checking it with everything off tests a
     # combination copier can never produce. Skip them; the leg matrix covers those paths.
-    targets = [
-        Path(p) for p in paths if p.endswith(".py.jinja") and "{%" not in p
-    ]
+    targets = [Path(p) for p in paths if p.endswith(".py.jinja") and "{%" not in p]
     if not targets:
         return 0
 
@@ -80,6 +80,7 @@ def main(paths: list[str]) -> int:
                 ["ruff", "format", "--check", "--line-length", "100", str(probe)],
                 capture_output=True,
                 text=True,
+                check=False,  # the returncode IS the result here; a raise would lose the detail
             )
             lint = subprocess.run(
                 [
@@ -98,6 +99,7 @@ def main(paths: list[str]) -> int:
                 ],
                 capture_output=True,
                 text=True,
+                check=False,  # the returncode IS the result here; a raise would lose the detail
             )
             if fmt.returncode != 0 or lint.returncode != 0:
                 detail = "".join(
@@ -106,8 +108,7 @@ def main(paths: list[str]) -> int:
                     if line.strip()
                 )
                 failures.append(
-                    f"{path}\n"
-                    f"    with every gated block OFF, the render is not clean:\n{detail}"
+                    f"{path}\n    with every gated block OFF, the render is not clean:\n{detail}"
                 )
 
     if failures:

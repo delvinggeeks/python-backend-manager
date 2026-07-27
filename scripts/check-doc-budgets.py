@@ -10,8 +10,9 @@ same pull request, where a reviewer sees the raise as the decision it is.
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".doc-budgets.toml"
@@ -30,9 +31,7 @@ def main() -> int:
         status = "OK  " if headroom >= 0 else "OVER"
         print(f"  {status} {name:36} {actual:>4} / {budget:<4} ({headroom:+d})")
         if headroom < 0:
-            failures.append(
-                f"{name}: {actual} lines exceeds its budget of {budget} by {-headroom}"
-            )
+            failures.append(f"{name}: {actual} lines exceeds its budget of {budget} by {-headroom}")
 
     if failures:
         print("\nDOC BUDGET EXCEEDED:", file=sys.stderr)
