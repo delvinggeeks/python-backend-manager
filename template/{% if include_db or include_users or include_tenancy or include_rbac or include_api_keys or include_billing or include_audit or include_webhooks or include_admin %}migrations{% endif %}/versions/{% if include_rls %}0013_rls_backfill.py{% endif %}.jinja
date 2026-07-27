@@ -34,15 +34,23 @@ down_revision: str | Sequence[str] | None = {% if include_metering %}"0012_walle
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Tables created after 0008_rls that carry organization_id. Built inline so the list renders as
-# `[]` (not a multi-line literal) when a build has neither metering nor webhooks.
+# Tables created after 0008_rls that carry organization_id. Rendered EXPLODED when non-empty and
+# as a bare `[]` when empty: 0008_rls's single-line form is only formatter-clean because its names
+# are short, and the five names below render to 105 columns — over the 100-col limit, in exactly
+# the combination that ships the most tables.
 {% set _late_tables = [] %}
 {% if include_webhooks %}{% set _ = _late_tables.append("outbox_events") %}{% endif %}
 {% if include_metering %}{% set _ = _late_tables.append("usage_events") %}{% endif %}
 {% if include_metering %}{% set _ = _late_tables.append("invoices") %}{% endif %}
 {% if include_metering %}{% set _ = _late_tables.append("customer_wallets") %}{% endif %}
 {% if include_metering %}{% set _ = _late_tables.append("wallet_transactions") %}{% endif %}
-_TENANT_TABLES = [{% for t in _late_tables %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% if _late_tables %}
+_TENANT_TABLES = [
+{% for t in _late_tables %}    "{{ t }}",
+{% endfor %}]
+{% else %}
+_TENANT_TABLES = []
+{% endif %}
 
 _POLICY = "tenant_isolation"
 # Identical to 0008_rls. Reads are scoped to the current tenant; writes are allowed when there is
