@@ -73,26 +73,33 @@ renamed `.jinja` path had to be un-ignored in `template/.gitignore`, whose `.env
 `template/` in this repo as well as shipping into services. **ENV-2** files what the render still
 carries: `SECURITY.md` is verbatim, so every service sends vulnerability reports to one company.*
 
-### P4-b · Close the metering + outbox RLS gap
+*`P4-b` exits with its own PR. `RLS_EXEMPT_TABLES` now holds only `memberships`. Two findings the
+plan did not contain: SQLite implements neither `ALTER COLUMN ... SET NOT NULL` nor an in-place
+foreign key, so the contract step needs `op.batch_alter_table` — a dialect guard would have left the
+column nullable and unconstrained in exactly the database the unit suites run on; and the five-table
+list rendered to 105 columns in the all-capabilities combination, the gated-block class again. The
+column route held up: nothing surfaced against it, so the pre-made decision stands as made. **GATE-1**
+files a fail-open found in P4-a's own enumeration while using it.*
 
-- **Deliverable:** every table exempted as DEBT in `RLS_EXEMPT_TABLES` carries a tenant policy, and
-  its exemption entry is deleted — four tables: `usage_events`, `invoices`, `customer_wallets`,
-  `outbox_events`, plus the `wallet_transactions` column that makes it possible.
-- **Done-contract sketch:** `RLS_EXEMPT_TABLES` contains only `memberships` (the design exemption);
-  P4-a's coverage gate passes with no debt entries; the alembic round-trip still reverses.
-- **Failing-test-first:** delete the four debt entries FIRST. P4-a's gate then names exactly the
-  tables this ticket must protect — the gate written for this purpose is the entry point.
-- **Pre-made decision (do not re-litigate):** `wallet_transactions` has no `organization_id`. Add
-  one as a **denormalised column, expand→contract** — nullable → backfill from the parent wallet →
-  `NOT NULL` + the standard policy. *Not* a parent-referencing `EXISTS` policy: local-fact
-  correctness over policy-within-policy subtlety, no per-row subquery on the highest-write table,
-  and one standard policy shape everywhere (a second shape is a second thing every auditor learns).
-  If implementation surfaces evidence against the column route, **stop and flag** rather than
-  switching silently.
-- **File set:** a new migration under `template/migrations/versions/`, `metering/models.py`,
-  `template/tests/{% if include_rls %}test_rls.py{% endif %}` (the exemption list), §13.
-- **Blocked-by:** none (P4-a shipped). **Blocks:** none.
-- **AFK.** **Sized:** yes — the design decision is made, so this is migration + policy + list edit.
+### GATE-1 · The RLS enumeration fails open when a model's dependency is missing
+
+- **Deliverable:** a partially-failed import cannot silently shrink the set of tables the RLS
+  coverage gate checks.
+- **Evidence:** `_tenant_tables_from_metadata()` in `test_rls.py` imports each model module under
+  `contextlib.suppress(ImportError)`, so an *absent capability* and a *missing dependency* are
+  indistinguishable. Observed during P4-b: syncing without `--extra users` made every model module
+  raise `ModuleNotFoundError: fastapi_users` — all suppressed — and the enumeration returned just
+  `{items}`. The existing `assert tenant_tables` caught that only because the set was **totally**
+  empty. Had one module imported and another failed, the gate would have passed while checking
+  fewer tables than exist, reporting green for coverage it never verified.
+- **Why it matters:** this is the gate that proves tenant isolation. Its failure mode should be a
+  loud error, never a smaller silent scope — a shrinking denominator is invisible in a pass.
+- **Failing-test-first:** sync a metering render without `--extra users` and observe the enumeration
+  return `{items}` while every model module fails to import.
+- **Sketch:** distinguish the two cases — an ImportError naming a module *inside* `app.` is an
+  absent capability and is fine to skip; anything else is a broken environment and should raise.
+- **File set:** `template/tests/{% if include_rls %}test_rls.py{% endif %}`.
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
 
 ### LINT-1 · This repo's own `scripts/*.py` have no format or lint gate
 
@@ -113,6 +120,32 @@ carries: `SECURITY.md` is verbatim, so every service sends vulnerability reports
   read as green), the two drifted files. Consider `scripts/` in the pre-commit config too — but the
   hook is bypassable, so CI is the control and the hook is the convenience.
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one job, two reformats.
+
+### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
+
+- **Deliverable:** a generated service's disclosure address is the *service owner's*, not the
+  template author's.
+- **Evidence:** `template/SECURITY.md` has no `.jinja` suffix, so it is copied byte-for-byte, and
+  line 3 reads `Report vulnerabilities to security@witaura.in`. Every service this template has
+  generated instructs finders to email that address, and there is **no copier question** to override
+  it — unlike `author_name` / `author_email`, which are prompted and therefore not defects.
+  Confirmed on a service rendered as `acme-widgets-api` after ENV-1 landed.
+- **Why this outranks a naming nit:** a disclosure path that reaches the wrong organisation is worse
+  than none. The finder believes they have reported it; the operator never hears. §12 requires a
+  vulnerability disclosure path at `environment` position, and one pointing elsewhere does not meet
+  it.
+- **Also in scope, minor:** `template/README.md.jinja:5` names the template
+  `witaura-backend-template`, which is not this repository. Stale provenance, cosmetic.
+- **Design decision required (do not pre-empt):** a new copier question (`security_contact`?) versus
+  deriving from `author_email` versus shipping a `TODO` placeholder that a service must fill. Each
+  trades safety against friction differently — decide before building.
+- **Failing-test-first:** render a service and assert `SECURITY.md` contains no address the answers
+  file did not supply.
+- **File set:** `template/SECURITY.md` → `.jinja` (via `git mv`), `copier.yml`,
+  `template/README.md.jinja`.
+- **Blocked-by:** none. **Blocks:** none. **HITL** — the question design is a judgement call.
+  **Sized:** yes.
+- *Re-filed: the ENV-1 exit deleted this block along with ENV-1's, which sat immediately above it.*
 
 ### GIT-1 · Root `.gitignore` does not ignore `.env`
 

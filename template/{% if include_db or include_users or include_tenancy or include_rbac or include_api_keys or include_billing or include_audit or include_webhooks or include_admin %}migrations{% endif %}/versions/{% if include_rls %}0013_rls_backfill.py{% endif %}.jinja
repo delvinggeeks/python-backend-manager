@@ -1,0 +1,79 @@
+"""RLS for the tenant tables created after 0008 (metering + outbox)
+
+Revision ID: 0013_rls_backfill
+Revises: {% if include_metering %}0012_wallet_org{% elif include_idempotency %}0010_idempotency{% elif include_webhooks %}0009_outbox{% else %}0008_rls{% endif %}
+
+Create Date: ships with the template (P4-b — include_rls)
+
+`0008_rls` protects every tenant table that existed when it was written. Metering (`0011`) and the
+outbox (`0009`) create theirs AFTERWARDS, so those tables could never have been in that migration's
+list — the ordering, not an oversight, is why they went unprotected. This migration is where tenant
+tables created after 0008 get the same treatment.
+
+The policy is IDENTICAL to 0008's — same name, same USING, same WITH CHECK — because a second
+policy shape is a second thing every auditor has to learn. The expressions are restated here rather
+than imported: a migration must keep describing the schema change it made even if a later revision
+rewrites the original, so cross-importing between revisions would make history mutable.
+
+`wallet_transactions` is protected on the denormalised column `0012_wallet_org` adds, not through
+its parent wallet — see that revision for why.
+
+`outbox_events` is low-risk to protect and was verified as such: the relay opens
+``PrivilegedSessionFactory`` (BYPASSRLS), so a policy cannot starve the drain, and the write path
+runs inside the caller's already-tenant-scoped transaction.
+"""
+
+from collections.abc import Sequence
+
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0013_rls_backfill"
+down_revision: str | Sequence[str] | None = {% if include_metering %}"0012_wallet_org"{% elif include_idempotency %}"0010_idempotency"{% elif include_webhooks %}"0009_outbox"{% else %}"0008_rls"{% endif %}
+
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+# Tables created after 0008_rls that carry organization_id. Rendered EXPLODED when non-empty and
+# as a bare `[]` when empty: 0008_rls's single-line form is only formatter-clean because its names
+# are short, and the five names below render to 105 columns — over the 100-col limit, in exactly
+# the combination that ships the most tables.
+{% set _late_tables = [] %}
+{% if include_webhooks %}{% set _ = _late_tables.append("outbox_events") %}{% endif %}
+{% if include_metering %}{% set _ = _late_tables.append("usage_events") %}{% endif %}
+{% if include_metering %}{% set _ = _late_tables.append("invoices") %}{% endif %}
+{% if include_metering %}{% set _ = _late_tables.append("customer_wallets") %}{% endif %}
+{% if include_metering %}{% set _ = _late_tables.append("wallet_transactions") %}{% endif %}
+{% if _late_tables %}
+_TENANT_TABLES = [
+{% for t in _late_tables %}    "{{ t }}",
+{% endfor %}]
+{% else %}
+_TENANT_TABLES = []
+{% endif %}
+
+_POLICY = "tenant_isolation"
+# Identical to 0008_rls. Reads are scoped to the current tenant; writes are allowed when there is
+# no tenant context (bootstrapping, system rows) and must otherwise match it.
+_TENANT = "NULLIF(current_setting('app.current_tenant', true), '')"
+_USING = f"organization_id = {_TENANT}::uuid"
+_CHECK = f"{_TENANT} IS NULL OR {_USING}"
+
+
+def upgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return  # RLS is Postgres-only — a no-op on SQLite (which has no row-level security).
+    # Table names are hardcoded literals from _TENANT_TABLES (never user input); S608 is
+    # ignored for migrations in pyproject.
+    for table in _TENANT_TABLES:
+        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(f"CREATE POLICY {_POLICY} ON {table} USING ({_USING}) WITH CHECK ({_CHECK})")
+
+
+def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    for table in _TENANT_TABLES:
+        op.execute(f"DROP POLICY IF EXISTS {_POLICY} ON {table}")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")

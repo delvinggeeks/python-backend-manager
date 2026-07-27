@@ -8,9 +8,10 @@ Create Date: ships with the template (include_metering)
 Usage→rating→invoice + prepaid-wallet tables. Metering implies tenancy (org-scoped), so this chains
 onto the auth-sessions migration (or the latest of rls / outbox / idempotency when those are on).
 
-RLS note: these org-scoped money tables are deliberately NOT in the P4 RLS _TENANT_TABLES (a
-deferred follow-up; wallet_transactions has no organization_id column). Isolation today rests on the
-router's get_current_membership + explicit organization_id filters on every query.
+RLS note: these tables are not in 0008_rls's _TENANT_TABLES because they do not exist yet when that
+revision runs — ordering, not omission. `0013_rls_backfill` protects them, and `0012_wallet_org`
+gives wallet_transactions the organization_id column it needs to be protected on a local fact.
+This revision is left describing the schema it created; history is not rewritten.
 """
 
 from collections.abc import Sequence

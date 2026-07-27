@@ -1,0 +1,85 @@
+"""wallet_transactions.organization_id — denormalised, expand→contract
+
+Revision ID: 0012_wallet_org
+Revises: 0011_metering
+
+Create Date: ships with the template (include_metering)
+
+``wallet_transactions`` is the only org-scoped metering table that carried no ``organization_id``:
+it reached its tenant only through ``wallet_id -> customer_wallets``. That made it the one table
+P4's RLS backstop could not protect on a local fact.
+
+The column is DENORMALISED rather than reached through the parent, so the policy on this table is
+the same single expression every other tenant table uses. The alternative — ``USING (EXISTS
+(SELECT 1 FROM customer_wallets ...))`` — puts a per-row subquery on the highest-write table in the
+schema and introduces a second policy shape that every future reader has to learn separately.
+
+Expand→contract, so an existing service with rows can run it without a window where the column is
+required but unset:
+
+  1. add the column NULLable,
+  2. backfill from the parent wallet,
+  3. only then set NOT NULL and index it.
+
+Step 2 is the whole reason this is not a one-liner: an already-deployed service has wallet rows, and
+`0013_rls_backfill` will refuse to protect a table whose tenant column is null.
+"""
+
+from collections.abc import Sequence
+
+import fastapi_users_db_sqlalchemy.generics
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0012_wallet_org"
+down_revision: str | Sequence[str] | None = "0011_metering"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+_GUID = fastapi_users_db_sqlalchemy.generics.GUID
+
+
+def upgrade() -> None:
+    # --- expand -------------------------------------------------------------------------------
+    op.add_column(
+        "wallet_transactions",
+        sa.Column("organization_id", _GUID(), nullable=True),
+    )
+    # --- backfill from the parent wallet ---------------------------------------------------
+    # The value is not invented: it is exactly the org the row already belonged to, reached the
+    # slow way this migration exists to stop needing.
+    op.execute(
+        "UPDATE wallet_transactions SET organization_id = ("
+        "SELECT customer_wallets.organization_id FROM customer_wallets "
+        "WHERE customer_wallets.id = wallet_transactions.wallet_id"
+        ") WHERE organization_id IS NULL"
+    )
+    # --- contract -----------------------------------------------------------------------------
+    # BATCH mode, and not as a style preference: SQLite implements neither
+    # `ALTER COLUMN ... SET NOT NULL` nor adding a foreign key in place, and the unit suites run on
+    # SQLite while production runs on Postgres. Guarding these by dialect instead would leave the
+    # column nullable and unconstrained in exactly the database the tests use, so the tests could
+    # not fail on a NULL the production schema rejects. Batch mode rebuilds the table on SQLite and
+    # emits plain ALTERs on Postgres, so one shape holds on both.
+    with op.batch_alter_table("wallet_transactions") as batch_op:
+        batch_op.alter_column("organization_id", existing_type=_GUID(), nullable=False)
+        batch_op.create_foreign_key(
+            "fk_wallet_transactions_organization_id",
+            "organizations",
+            ["organization_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+    op.create_index(
+        "ix_wallet_transactions_organization_id",
+        "wallet_transactions",
+        ["organization_id"],
+    )
+
+
+def downgrade() -> None:
+    op.drop_index("ix_wallet_transactions_organization_id", table_name="wallet_transactions")
+    with op.batch_alter_table("wallet_transactions") as batch_op:
+        batch_op.drop_constraint("fk_wallet_transactions_organization_id", type_="foreignkey")
+        batch_op.drop_column("organization_id")

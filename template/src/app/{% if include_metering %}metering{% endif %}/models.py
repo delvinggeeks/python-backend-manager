@@ -93,6 +93,14 @@ class WalletTransaction(Base):
     wallet_id: Mapped[uuid.UUID] = mapped_column(
         GUID, ForeignKey("customer_wallets.id", ondelete="CASCADE"), index=True
     )
+    # Denormalised from the parent wallet so this row can be RLS-protected on a LOCAL fact.
+    # The alternative — a policy doing EXISTS against customer_wallets — makes every read of the
+    # highest-write table in the schema carry a per-row subquery, and gives the schema a second
+    # policy shape that every future auditor has to learn. One shape everywhere, checked locally.
+    # Kept in step with the wallet by the service layer, which writes both inside one transaction.
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        GUID, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
     delta_cents: Mapped[int] = mapped_column(BigInteger)  # positive top-up, negative debit
     reason: Mapped[str] = mapped_column(String(64))
     # UNIQUE (index) so a retried top-up / debit applies once (idempotent wallet mutation).
