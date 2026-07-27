@@ -9,8 +9,6 @@ How to operate this repo. *What* it is lives in [PLATFORM-INTEGRATION.md](docs/P
   compatible); edit there. A PreToolUse hook blocks raw `pip install`.
 - **Never build a service inside this repo.** Create one with `/scaffold`, which runs
   `copier copy` into a *sibling* directory; evolve the service there.
-- **Exactly one agent framework per service** — `pydantic-ai` | `langgraph` |
-  `openai-agents`. They are declared as conflicting extras in `[tool.uv]`; never enable two.
 - **Releasing → `/release`.** Commit with Conventional Commits (`feat:` / `fix:` /
   `chore:`; `feat!:` = major). On merge to `main`, CD auto-tags and cuts the GitHub
   Release — only `feat:` / `fix:` / breaking commits bump a version. Downstream services
@@ -34,10 +32,11 @@ How to operate this repo. *What* it is lives in [PLATFORM-INTEGRATION.md](docs/P
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
 - **GC Friday — a repeated mistake becomes a gate, never a reminder.** A standing weekly session
-  asks of each correction: *could this have been made impossible rather than discouraged?* Where
-  yes, the output is a hook, a CI gate or a lint rule — **never a doc line**, because a doc line is
-  the thing that already failed. Harvested so far: `.claude/hooks/staged-scope.sh`,
-  `scripts/leg-check.sh`, `ci-ok`.
+- **GC Friday — a repeated mistake becomes a gate, never a reminder.** A weekly session asks of each
+  correction: *could this have been made impossible rather than discouraged?* Where yes, the output
+  is a hook, a CI gate or a lint rule — **never a doc line**, because a doc line is the thing that
+  already failed. `.github/workflows/gc-friday.yml` gathers the week's evidence: the trigger and the
+  inventory are mechanical, the judgement is invoked.
 - **Two automation layers — don't confuse them:** dependency freshness
   (`uv lock --upgrade` + Renovate, per service and for this repo) vs template propagation
   (`copier update`, which pulls template changes into already-generated services).

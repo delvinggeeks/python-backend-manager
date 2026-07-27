@@ -87,6 +87,35 @@ jobs:
                      | .[] | \"- \\(.[0].headSha[0:8]) \\(.[0].displayTitle)\"" || echo "_none_"
             echo
 
+            echo "## Workaround docs to re-check"
+            echo "<sub>For each fix merged this window, documentation mentioning its key terms. A fix"
+            echo "removes a cause; prose describing the WORKAROUND for that cause outlives it silently."
+            echo "These are candidates for the session's judgement, not findings.</sub>"
+            echo
+            gh pr list --repo "$REPO" --state merged --limit 50 \
+               --search "merged:>=${since%%T*}" --json number,title \
+               --jq '.[] | select(.title | test("^fix"; "i")) | "\(.number)\t\(.title)"' \
+            | while IFS=$'\t' read -r num title; do
+                [ -n "$title" ] || continue
+                # Terms worth grepping: lowercase words of 5+ chars, minus generic filler.
+                terms=$(printf '%s' "$title" \
+                  | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9_-' '\n' \
+                  | grep -E '^[a-z][a-z0-9_-]{4,}$' \
+                  | grep -vwE 'their|there|which|while|about|after|before|fixes|fixed|should|because|through' \
+                  | sort -u | head -4)
+                [ -n "$terms" ] || continue
+                hits=""
+                for term in $terms; do
+                  found=$(grep -rilF "$term" docs README.md template/README.md.jinja 2>/dev/null | head -3 | tr '\n' ' ')
+                  [ -n "$found" ] && hits="$hits\n    - \`$term\` -> $found"
+                done
+                if [ -n "$hits" ]; then
+                  echo "- **#$num** $title"
+                  printf '%b\n' "$hits"
+                fi
+              done || echo "_no fixes in window_"
+            echo
+
             echo "---"
             echo "<sub>Opened by \`.github/workflows/gc-friday.yml\`. The trigger and this inventory are"
             echo "mechanical; the judgement is invoked. Close this issue when the harvest is done.</sub>"
