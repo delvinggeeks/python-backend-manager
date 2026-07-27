@@ -248,6 +248,7 @@ row here, and appending makes each one collide with every other.
 | 3 | Privileged sessions **clear** tenant context rather than inheriting it | **environment** | same hook, `rls_mode="bypass"` branch |
 | 3 | Tenant context is **transaction-scoped** — cannot be inherited by the next transaction on a pooled connection | **environment** (Postgres discards it at commit) | `db/session.py.jinja` — `set_config(…, true)` issued from an `after_begin` hook, per transaction, for both the tenant and privileged paths |
 | 4 | **Every route is authenticated, or explicitly public** | **policy/CI** | `tests/test_route_auth.py::test_every_route_is_authenticated_or_explicitly_public` — walks the service's own OpenAPI document; an operation with no security requirement must appear by exact `"METHOD /path"` name in the committed `PUBLIC_ROUTES` frozenset. Runs in every capability leg, since the route set varies by flag |
+| 4 | **Hiding a route from the docs cannot exempt it from the auth gate** | **policy/CI** | `tests/test_route_auth.py::test_no_unapproved_schema_exclusions` — an `ast` walk over `src/app` requires every `include_in_schema=False` to appear in `APPROVED_SCHEMA_EXCLUSIONS` with a stated reason; a companion test rejects stale approvals. Source-level by necessity: a hidden route is absent from the OpenAPI document the walker reads, and `app.routes` cannot be enumerated (FastAPI wraps included routers in an object exposing no `.routes`) |
 | 4 | **No anonymously-readable audit log** | **environment** (the route does not exist) | `src/app/audit/router.py` mounts the flat `GET /audit` only under an identity capability; `tests/test_audit.py::test_audit_read_endpoint_is_not_mounted_without_an_identity_capability` asserts 404 otherwise. `record()` is unaffected — the log still appends, it just has no HTTP reader until a reader can be authenticated |
 | 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
 | 4, 7 | **Provider SDKs only at the adapter edge** | **policy/CI** (import-linter) | `.importlinter` contract *only the ai adapter layer may import a model-provider SDK*, with exactly one `ignore_imports` entry — `app.agents.example_agent -> anthropic`, marked TEMPORARY and deleted by W1. The rule lands before the module it governs, so W1 tightens the contract by **deletion** rather than by someone remembering to add it |
@@ -293,13 +294,6 @@ only what is open and unscheduled.*
   decision rather than an invisible absence. Ledger ticket **P4-b** closes them and deletes the
   entries. `outbox_events` is low-risk (the relay already runs BYPASSRLS); `wallet_transactions`
   needs the denormalised `organization_id` column P4-b adds, having none today.
-- **`FU-2` · `include_in_schema=False` bypasses the route-coverage gate.** The walker reads the
-  OpenAPI document, so a route excluded from the schema is invisible to it — one keyword argument
-  disables the check for that route. Direct route-table enumeration is not a viable alternative:
-  FastAPI 0.137 wraps included routers in an internal `_IncludedRouter` that exposes no `.routes`,
-  so the real routes cannot be reached from `app.routes`. Proposed mechanical fix: an AST gate over
-  the template source asserting `include_in_schema=False` appears only at approved sites — policy/CI,
-  and independent of framework internals. *Filed, not implemented.*
 
 **Closed** — kept for the audit trail; each names the position that now holds it.
 
@@ -307,6 +301,13 @@ only what is open and unscheduled.*
   fell back to `database_url`, so a default local environment ran the "privileged" session as the
   ordinary app role. The local compose stack now provisions a dedicated `BYPASSRLS` role, so the dev
   topology matches production — the *Dev matches production for the privileged role* row above.
+- ~~**`FU-2` · `include_in_schema=False` bypasses the route-coverage gate.**~~ **CLOSED.** The
+  route-coverage walker reads the OpenAPI document, so one keyword argument made a route
+  invisible to it. Enumerating `app.routes` instead was not available: FastAPI wraps included
+  routers in an internal object exposing no `.routes`. Sealed at source instead — the *Hiding a
+  route from the docs cannot exempt it from the auth gate* row above. The demonstration that
+  justified it: a hidden `/internal/debug-config` answered an anonymous `GET` with **200** and
+  the database URL in the body, while the route-coverage gate reported three tests passing.
 - ~~**`FU-3` · `leg-check.sh` should refuse a dirty worktree.**~~ **CLOSED.** `copier --vcs-ref HEAD`
   renders uncommitted edits, so a leg-check on a dirty tree validated something the commit did not
   contain. `scripts/leg-check.sh` now fails fast when `git status --porcelain` is non-empty, with
