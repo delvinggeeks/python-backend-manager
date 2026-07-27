@@ -155,6 +155,7 @@ class SqlMeteringService:
         session.add(
             WalletTransaction(
                 wallet_id=wallet_id,
+                organization_id=invoice.organization_id,
                 delta_cents=-invoice.total_cents,
                 reason="invoice",
                 idempotency_key=f"invoice:{invoice.id}",
@@ -186,6 +187,7 @@ class SqlMeteringService:
         session.add(
             WalletTransaction(
                 wallet_id=wallet.id,
+                organization_id=organization_id,
                 delta_cents=amount_cents,
                 reason="topup",
                 idempotency_key=idempotency_key,
