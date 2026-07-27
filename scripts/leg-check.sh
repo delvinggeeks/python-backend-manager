@@ -11,6 +11,31 @@ set -euo pipefail
 
 project="${1:?usage: leg-check.sh <generated-project-dir> [extras...]}"
 shift || true
+
+# --- refuse a dirty worktree -----------------------------------------------------------------
+# `copier --vcs-ref HEAD` renders UNCOMMITTED edits, so a leg-check on a dirty tree validates
+# something the commit does not contain — the exact "passed locally, failed CI" class this script
+# exists to eliminate. Set LEG_CHECK_ALLOW_DIRTY=1 to override deliberately.
+if [ -z "${LEG_CHECK_ALLOW_DIRTY:-}" ] && git -C "$(dirname "$0")/.." rev-parse --git-dir >/dev/null 2>&1; then
+  dirty=$(git -C "$(dirname "$0")/.." status --porcelain --untracked-files=no)
+  if [ -n "$dirty" ]; then
+    echo "REFUSING: the template worktree is dirty, so --vcs-ref HEAD would render uncommitted" >&2
+    echo "edits that the commit does not contain. Commit first, or set LEG_CHECK_ALLOW_DIRTY=1." >&2
+    printf '%s\n' "$dirty" >&2
+    exit 2
+  fi
+fi
+
+# --- per-run isolation -------------------------------------------------------------------------
+# The generated conftest keys its sqlite file off the project SLUG, which is identical across
+# renders, and run_fuzz.sh binds a fixed default port. CI never contends for either (one leg per
+# runner), but any local harness running legs concurrently does. Derive both from the project
+# directory so no caller has to remember.
+project_id=$(printf '%s' "$project" | cksum | cut -d' ' -f1)
+export TMPDIR="${TMPDIR_OVERRIDE:-${project}/.leg-tmp}"
+mkdir -p "$TMPDIR"
+export FUZZ_PORT="${FUZZ_PORT:-$(( 20000 + project_id % 20000 ))}"
+
 cd "$project"
 
 step() { printf '\n\033[1m── %s ──\033[0m\n' "$1"; }

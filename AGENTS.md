@@ -28,10 +28,15 @@ When a convention isn't obvious, **read this file — don't guess.**
   "it passed locally and CI disagrees". Adding a gate means adding it there, once.
   Corollary: **commit before you validate.** `copier --vcs-ref HEAD` renders a *dirty worktree*, so
   a leg-check on uncommitted edits silently validates something the commit does not contain.
-- **On a branch carrying one slice, stage by explicit path — never `git add -A`.** A sweep pulls in
-  whatever else is lying around: an unrelated doc, a deliberately-failing test from the next slice.
-  Enforced mechanically by `.claude/hooks/staged-scope.sh` against the prefixes declared in
-  `.claude/slice-scope`.
+- **Scope every command to what the task needs — wildcards default to more.** On a branch carrying
+  one slice, stage by explicit path, never `git add -A` (enforced by `.claude/hooks/staged-scope.sh`
+  against `.claude/slice-scope`). The same discipline covers the other over-reaching defaults:
+  `rm -rf` outside the generated/scratch tree, and `pkill -f`, which matches far more than the
+  process you meant and will happily kill the session running it. Prefer a named target: a specific
+  path, a recorded PID. `rm -rf` is already denied by `.claude/settings.json`; the rest is this rule.
+- **A PR opens only after the evidence it will be judged on exists.** Open it when the matrix,
+  gate or benchmark it claims has actually been run — not before, so the first thing a reviewer
+  sees is the result rather than a promise of one.
 - **Subagents are read-only.** `template-validator`, `build-judge`, `dependency-auditor`,
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
