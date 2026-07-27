@@ -229,6 +229,39 @@ jobs:
       - name: Check always-read documents against their committed budgets
         run: python3 scripts/check-doc-budgets.py
 
+  # This repo's OWN Python — scripts/ and anything else outside template/ — had no gate at all.
+  # Every other ruff invocation in this file runs with `working-directory: /tmp/generated`, i.e.
+  # against the GENERATED project, so the manager repo's own source was never checked by anything.
+  # Two files had already drifted to 88-column wrapping against root ruff.toml's line-length = 100.
+  #
+  # Scoped to `scripts/`, NOT the whole tree, and that is a correctness point rather than caution:
+  # `template/` carries its own [tool.ruff] in pyproject.toml.jinja, which the capability legs above
+  # apply to the RENDERED project — the only place that code is real. Checking it from the root
+  # instead applies root ruff.toml, a different rule set: measured, that reports 22 findings the
+  # template deliberately configures away (14x B008, which its `ignore` lists; S105 in tests, which
+  # its per-file-ignores cover). Two gates disagreeing about the same file is worse than one gate.
+  #
+  # The version is PINNED. A floating ruff turned three capability legs red once, when 0.16 began
+  # formatting Python blocks inside markdown; a lint gate that changes verdict without a commit is
+  # not a gate. Renovate proposes the bump as a reviewable PR.
+  repo-lint:
+    name: "repo lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.11.x"
+      - name: Lint and format-check this repository's own Python
+        run: |
+          set -euo pipefail
+          # renovate: datasource=pypi depName=ruff
+          RUFF_VERSION=0.16.0
+          uvx "ruff@${RUFF_VERSION}" check scripts/
+          uvx "ruff@${RUFF_VERSION}" format --check scripts/
+
   # Single STABLE required status check that gates auto-merge on the whole capability
   # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
   # covered automatically and branch protection never has to change.
@@ -265,7 +298,7 @@ jobs:
   #                    feed must never hard-block the autonomous merge.
   ci-ok:
     name: ci-ok
-    needs: [generate-and-test, generate-capability, generate-capability-gate, doc-budgets]
+    needs: [generate-and-test, generate-capability, generate-capability-gate, doc-budgets, repo-lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
