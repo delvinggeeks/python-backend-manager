@@ -31,7 +31,6 @@ How to operate this repo. *What* it is lives in [PLATFORM-INTEGRATION.md](docs/P
 - **Subagents are read-only.** `template-validator`, `build-judge`, `dependency-auditor`,
   and `docs-researcher` only read and report; the **parent session owns all edits,
   commits, and pushes.**
-- **GC Friday — a repeated mistake becomes a gate, never a reminder.** A standing weekly session
 - **GC Friday — a repeated mistake becomes a gate, never a reminder.** A weekly session asks of each
   correction: *could this have been made impossible rather than discouraged?* Where yes, the output
   is a hook, a CI gate or a lint rule — **never a doc line**, because a doc line is the thing that

@@ -69,6 +69,27 @@ and exited only once it merged.*
 - **Blocked-by:** none (P4-a shipped). **Blocks:** none.
 - **AFK.** **Sized:** yes — the design decision is made, so this is migration + policy + list edit.
 
+### GC-1 · The harvest workflow dies on SIGPIPE before it opens the issue
+
+- **Deliverable:** `.github/workflows/gc-friday.yml` completes and opens its labelled issue.
+- **Evidence it is broken:** run
+  [30281687247](https://github.com/delvinggeeks/python-backend-manager/actions/runs/30281687247) —
+  the first real invocation, dispatched by hand — exited **141** (`128 + SIGPIPE`) in *Build the
+  inventory*, so no issue was created. The scheduled Friday run fails the same way, silently.
+- **Cause:** the step runs `set -euo pipefail`, and four pipelines end in a reader that closes early.
+  `head` exits after its quota, the writer upstream takes `SIGPIPE`, `pipefail` promotes 141 to the
+  pipeline's status, and `-e` aborts the step: `gc-friday.yml:70` (`| grep -q .`), `:72`
+  (`| head -200`), `:105` (`| sort -u | head -4`), `:109` (`| head -3`).
+- **Failing-test-first:** dispatch the workflow unchanged and observe exit 141 — the run above *is*
+  that observation, so this ticket starts from a recorded failure rather than a predicted one.
+- **Note:** `:70` fails differently and worse — the SIGPIPE lands on an `if` condition, where `-e`
+  does not abort, so it merely evaluates false and the harvest reports AGENTS.md `_unchanged_` on
+  exactly the weeks it did change. A green run would still have been wrong.
+- **File set:** `.github/workflows/gc-friday.yml`. Prefer readers that consume their whole input
+  (`sed -n '1,200p'`, `awk 'NR<=4'`) over `head` under `pipefail`.
+- **Blocked-by:** none. **Blocks:** the GC Friday cadence, and the five gated-block instances that
+  were to be posted into the harvest issue. **AFK.** **Sized:** yes.
+
 ### DEV-1 · Narrow the settings Read deny-rule to real env files
 
 - **Deliverable:** `.claude/settings.json`'s `Read(./.env.*)` deny narrows so `.env.example` is
