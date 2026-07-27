@@ -16,6 +16,9 @@ build/
 .env
 .env.*
 !.env.example
+# Inert in a generated service; it matters in the template repo, where this same file governs
+# `template/` and `.env.*` above would otherwise ignore the un-rendered source of the line above.
+!.env.example.jinja
 
 # Local scratch (Schemathesis fuzz runner: throwaway DB + server log)
 .fuzz*
