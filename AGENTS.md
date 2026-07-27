@@ -61,7 +61,7 @@ means raising its budget in the same PR, so growth is a reviewed decision rather
 | Doing this | Read |
 |---|---|
 | Selecting or sizing work | the relevant phase in [docs/ROADMAP.md](docs/ROADMAP.md) — the single ledger |
-| Security work, or any guardrail | [docs/SECURITY-BASELINE.md](docs/SECURITY-BASELINE.md) (§0 position doctrine, §13 what is already enforced) |
+| Building or changing a gate, resolving a conflict, or any security work | [docs/SECURITY-BASELINE.md](docs/SECURITY-BASELINE.md) — §0 position doctrine, §13 gate conventions + what is already enforced |
 | Building a module | that module's `docs/` entry + [docs/PRINCIPLES.md](docs/PRINCIPLES.md) |
 | Choosing a library or provider | [docs/LIBRARY-DECISIONS.md](docs/LIBRARY-DECISIONS.md) — don't re-litigate; amend the ADR |
 | Wiring a seam | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) port-adapter catalog |

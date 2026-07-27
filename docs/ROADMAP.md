@@ -40,45 +40,47 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-These three are the active queue. Everything below them is coarse.
+The active queue. Everything below is coarse and carries `decompose on pull`.
 
-### T1 · Real `BYPASSRLS` role in local compose  (was FU-1)
+*Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
+(#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
+[SECURITY-BASELINE.md](SECURITY-BASELINE.md) §13. Each exit was confirmed against that ticket's own
+merged PR, never inferred from the batch — T2 was held back at first pass, when #73 was still open,
+and exited only once it merged.*
 
-- **Deliverable:** local compose provisions a dedicated `BYPASSRLS` role so `DATABASE_URL_PRIVILEGED`
-  stops falling back to the app URL and dev matches production.
-- **Done-contract sketch:** a fresh `docker compose up` yields a privileged session that passes the
-  existing `PrivilegedRoleMisconfigured` fail-fast; the app role still cannot bypass RLS.
-- **Failing-test-first:** extend `test_rls.py` to assert the privileged role reports `rolbypassrls`
-  against the compose-provisioned database — fails today, because dev falls back to the app role.
-- **Files:** `template/compose.yaml`, init SQL under `template/scripts/`, `template/.env.example`,
-  `template/tests/…test_rls.py`.
-- **Blocks / blocked-by:** neither.
-- **AFK.** **Sized:** one file set, one test, no cross-module surface.
+### P4-b · Close the metering + outbox RLS gap
 
-### T2 · GC-Friday workflow PR  (blocks T3's evidence)
+- **Deliverable:** every table exempted as DEBT in `RLS_EXEMPT_TABLES` carries a tenant policy, and
+  its exemption entry is deleted — four tables: `usage_events`, `invoices`, `customer_wallets`,
+  `outbox_events`, plus the `wallet_transactions` column that makes it possible.
+- **Done-contract sketch:** `RLS_EXEMPT_TABLES` contains only `memberships` (the design exemption);
+  P4-a's coverage gate passes with no debt entries; the alembic round-trip still reverses.
+- **Failing-test-first:** delete the four debt entries FIRST. P4-a's gate then names exactly the
+  tables this ticket must protect — the gate written for this purpose is the entry point.
+- **Pre-made decision (do not re-litigate):** `wallet_transactions` has no `organization_id`. Add
+  one as a **denormalised column, expand→contract** — nullable → backfill from the parent wallet →
+  `NOT NULL` + the standard policy. *Not* a parent-referencing `EXISTS` policy: local-fact
+  correctness over policy-within-policy subtlety, no per-row subquery on the highest-write table,
+  and one standard policy shape everywhere (a second shape is a second thing every auditor learns).
+  If implementation surfaces evidence against the column route, **stop and flag** rather than
+  switching silently.
+- **File set:** a new migration under `template/migrations/versions/`, `metering/models.py`,
+  `template/tests/{% if include_rls %}test_rls.py{% endif %}` (the exemption list), §13.
+- **Blocked-by:** none (P4-a shipped). **Blocks:** none.
+- **AFK.** **Sized:** yes — the design decision is made, so this is migration + policy + list edit.
 
-- **Deliverable:** open the PR for the pushed `gc-friday-workflow` branch, with the AGENTS.md caveat
-  updated to state that the trigger and inventory are mechanical while the judgement is invoked.
-- **Done-contract sketch:** workflow merged; the first harvest issue logs the five recorded
-  gated-block instances as T3's evidence base.
-- **Failing-test-first:** n/a — a CI workflow; `actionlint` clean is the gate.
-- **Files:** `.github/workflows/gc-friday.yml` (already committed on the branch), `AGENTS.md`.
-- **Blocks:** T3's evidence logging. **Blocked-by:** neither.
-- **HITL** — it opens an issue against the repository.
-- **Sized:** yes.
+### DEV-1 · Narrow the settings Read deny-rule to real env files
 
-### T3 · GC-Friday micro-render hook
-
-- **Deliverable:** a pre-commit hook that renders each staged `.jinja` with gated blocks OFF and runs
-  `ruff format --check` on the render.
-- **Done-contract sketch:** a staged `.jinja` whose gated-off render is malformed fails the commit.
-  Labelled a **fast-feedback shortcut** — the leg matrix remains the complete gate for this class,
-  because the failure depends on toggle combinations a single render cannot cover.
-- **Failing-test-first:** reconstruct any of the five recorded instances — strongest is the isort
-  case, where the correct blank-line count *differs per render* — and show the hook catching it.
-- **Files:** `scripts/`, root `.pre-commit-config.yaml` (does not exist yet; creating it is in scope).
-- **Blocked-by:** T2 (evidence base). **Blocks:** neither.
-- **AFK.** **Sized:** yes.
+- **Deliverable:** `.claude/settings.json`'s `Read(./.env.*)` deny narrows so `.env.example` is
+  readable while real env files stay denied.
+- **Done-contract sketch:** reading `.env.example` succeeds; reading `.env` and `.env.local` is
+  still refused. The rule blocked a legitimate edit during T1, where `.env.example` — a file of
+  placeholders — could not be read to document a setting.
+- **Failing-test-first:** attempt to read `template/.env.example` and observe the current denial;
+  that denial is the failing state.
+- **File set:** `.claude/settings.json`.
+- **Blocked-by:** none. **Blocks:** none.
+- **AFK.** **Sized:** yes — a one-line pattern change plus a two-case verification.
 
 ---
 

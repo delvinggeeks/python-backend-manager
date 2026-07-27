@@ -215,12 +215,48 @@ is the process-level statement of the doctrine in §0.
 A guardrail moves onto this table only when it is enforced at its required position **and** a test or
 gate demonstrates the failure it prevents. Evidence is a path, not a claim.
 
+### Gate conventions
+
+Three rules for building or changing a gate. Each was learned from a failure in this repo, cited
+inline — they are not preferences.
+
+- **Enumerate from the source of truth; never hand-maintain the list a gate checks.** A hand-kept
+  list stops covering what it claims the moment someone adds a thing and forgets the list, and it
+  fails *silently* — the gate still passes. *Evidence:* P4-a's coverage gate derives its table set
+  from SQLAlchemy metadata, so a new tenant table is in scope the day the model exists.
+- **A gate is trusted only after it has caught a failure nobody planted.** Until then it has
+  confirmed its author's expectations and nothing else. *Evidence:* the route-coverage gate found an
+  anonymously readable `GET /audit` on its first full-matrix run — outside the slice being worked on,
+  in code that had already shipped and been reviewed (see the note below the table).
+- **A conflict resolution is an edit, and earns the same verification as one.** Re-run the gates
+  before pushing a resolved branch — *evidence:* #71 was blocked by its own budget gate after a
+  rebase re-added a rule on top of the cuts meant to make room for it. And **keep-both is not a
+  resolution**: each side must be re-read for whether it is still true, because text can be stale on
+  arrival — *evidence:* this section carried `FU-1` twice, once closed and once as its original open
+  text, until the duplicate was read rather than merged.
+
+**Row order is deterministic: layer number, then guardrail name** (cross-cutting rows, layer `—`,
+last). Insert a new row into its sorted position rather than appending — every guardrail PR adds a
+row here, and appending makes each one collide with every other.
+
 | Layer | Guardrail | Position reached | Evidence |
 |---|---|---|---|
-| 3 | Tenant context is **transaction-scoped** — cannot be inherited by the next transaction on a pooled connection | **environment** (Postgres discards it at commit) | `db/session.py.jinja` — `set_config(…, true)` issued from an `after_begin` hook, per transaction, for both the tenant and privileged paths |
-| 3 | Privileged sessions **clear** tenant context rather than inheriting it | **environment** | same hook, `rls_mode="bypass"` branch |
 | 3 | A privileged role without `BYPASSRLS` **fails loudly** instead of returning empty results | **middleware** (fail-fast on first use) | `PrivilegedRoleMisconfigured` in `db/session.py.jinja` |
 | 3 | Cross-tenant isolation suite **cannot silently skip** in CI | **policy/CI** | `REQUIRE_DB_TESTS=1` exported by `.github/workflows/ci.yml` for any leg that renders `tests/test_rls.py`; the fixture calls `pytest.fail` rather than `pytest.skip` |
+| 3 | **Dev matches production for the privileged role** | **environment** (the role exists) | `template/scripts/init-db/01-privileged-role.sql`, mounted by `compose.yaml` into `/docker-entrypoint-initdb.d`; `tests/test_rls.py::test_compose_provisions_a_real_bypassrls_role` asserts the created role has `BYPASSRLS`, can log in, and that re-running the script is idempotent |
+| 3 | **Every tenant table is RLS-protected, or exempt by name** | **policy/CI** | `tests/test_rls.py::test_every_tenant_table_is_rls_protected` — enumerates every `organization_id`-bearing table from SQLAlchemy metadata, applies the real migration chain to Postgres, and requires each table to have a policy AND `FORCE`, or an entry in `RLS_EXEMPT_TABLES` with a stated reason. Metadata is the source of truth, so a new model is covered the moment it exists. A companion test rejects stale exemptions, scoped to capabilities the render actually ships |
+| 3 | Privileged sessions **clear** tenant context rather than inheriting it | **environment** | same hook, `rls_mode="bypass"` branch |
+| 3 | Tenant context is **transaction-scoped** — cannot be inherited by the next transaction on a pooled connection | **environment** (Postgres discards it at commit) | `db/session.py.jinja` — `set_config(…, true)` issued from an `after_begin` hook, per transaction, for both the tenant and privileged paths |
+| 4 | **Every route is authenticated, or explicitly public** | **policy/CI** | `tests/test_route_auth.py::test_every_route_is_authenticated_or_explicitly_public` — walks the service's own OpenAPI document; an operation with no security requirement must appear by exact `"METHOD /path"` name in the committed `PUBLIC_ROUTES` frozenset. Runs in every capability leg, since the route set varies by flag |
+| 4 | **No anonymously-readable audit log** | **environment** (the route does not exist) | `src/app/audit/router.py` mounts the flat `GET /audit` only under an identity capability; `tests/test_audit.py::test_audit_read_endpoint_is_not_mounted_without_an_identity_capability` asserts 404 otherwise. `record()` is unaffected — the log still appends, it just has no HTTP reader until a reader can be authenticated |
+| 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
+| 4, 7 | **Provider SDKs only at the adapter edge** | **policy/CI** (import-linter) | `.importlinter` contract *only the ai adapter layer may import a model-provider SDK*, with exactly one `ignore_imports` entry — `app.agents.example_agent -> anthropic`, marked TEMPORARY and deleted by W1. The rule lands before the module it governs, so W1 tightens the contract by **deletion** rather than by someone remembering to add it |
+| 4 | The allow-list **cannot accumulate dead entries** | **policy/CI** | `tests/test_route_auth.py::test_the_allow_list_has_no_stale_entries` — an entry naming a route the service does not expose fails the build, so `PUBLIC_ROUTES` stays a live contract rather than an append-only pre-authorization cache |
+| 6 | **Admin session cookie carries its flags** | **middleware** | `src/app/admin/setup.py` passes `https_only=settings.is_production`, `same_site="lax"` through sqladmin to Starlette's `SessionMiddleware`, whose `https_only` defaults to **False**; `tests/test_admin.py::test_admin_session_cookie_is_hardened` asserts `Secure`/`HttpOnly`/`SameSite` **with production settings active**, and a companion test asserts dev-over-http still signs in — hardening that breaks local login gets reverted rather than fixed |
+| 9, 6 | **Secret scanning, in two positions** | **policy/CI** (+ a local convenience) | `.github/workflows/secret-scan.yml` — gitleaks on the **PR diff** (blocking) and a **weekly full-history sweep**; `.pre-commit-config.yaml` adds the same scanner as a hook. The two positions are not redundancy: the hook is **bypassable** with `git commit --no-verify`, so it is a fast local catch, and the CI job — which cannot be skipped — is the actual control. The history sweep exists because a secret committed before this gate existed is still a live credential that no diff scan will ever see. Allowlist in `.gitleaks.toml`, anchored so a placeholder must be the *whole* value |
+| 11 | **PII redaction is a processor, not a call-site habit** | **middleware** | `src/app/core/logging.py::scrub_sensitive`, inserted ahead of **every** renderer so no formatting path bypasses it; recursive to any depth, container types preserved, key set from `settings.log_scrub_keys` (defaults: password, token, secret, authorization, api_key, email — matched case-insensitively as substrings, so `token` covers `access_token`). `tests/test_log_scrubbing.py` asserts on **rendered** output, including that non-sensitive fields survive verbatim |
+| — | Local validation and CI **cannot drift** | **policy/CI** | `scripts/leg-check.sh` is the single definition of "a leg passed"; `.github/workflows/ci.yml` invokes that same script with the same arguments |
+| — | Slice branches **cannot absorb unrelated changes** | **environment** (agent harness) | `.claude/hooks/staged-scope.sh`, a PreToolUse guard refusing a commit whose staged paths fall outside `.claude/slice-scope` |
 
 **The failing test that justified the change** (`tests/test_rls.py::test_tenant_context_does_not_outlive_its_transaction`)
 demonstrated a real cross-tenant read against the previous implementation:
@@ -229,13 +265,6 @@ demonstrated a real cross-tenant read against the previous implementation:
 CROSS-TENANT READ: a consumer that set no tenant context read ['a']
 because the connection still carried app.current_tenant='b2e23a62-…'
 ```
-
-| 4 | **Every route is authenticated, or explicitly public** | **policy/CI** | `tests/test_route_auth.py::test_every_route_is_authenticated_or_explicitly_public` — walks the service's own OpenAPI document; an operation with no security requirement must appear by exact `"METHOD /path"` name in the committed `PUBLIC_ROUTES` frozenset. Runs in every capability leg, since the route set varies by flag |
-| 4 | The allow-list **cannot accumulate dead entries** | **policy/CI** | `tests/test_route_auth.py::test_the_allow_list_has_no_stale_entries` — an entry naming a route the service does not expose fails the build, so `PUBLIC_ROUTES` stays a live contract rather than an append-only pre-authorization cache |
-| 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
-| — | Local validation and CI **cannot drift** | **policy/CI** | `scripts/leg-check.sh` is the single definition of "a leg passed"; `.github/workflows/ci.yml` invokes that same script with the same arguments |
-| — | Slice branches **cannot absorb unrelated changes** | **environment** (agent harness) | `.claude/hooks/staged-scope.sh`, a PreToolUse guard refusing a commit whose staged paths fall outside `.claude/slice-scope` |
-| 4 | **No anonymously-readable audit log** | **environment** (the route does not exist) | `src/app/audit/router.py` mounts the flat `GET /audit` only under an identity capability; `tests/test_audit.py::test_audit_read_endpoint_is_not_mounted_without_an_identity_capability` asserts 404 otherwise. `record()` is unaffected — the log still appends, it just has no HTTP reader until a reader can be authenticated |
 
 > **Why this row is the one to point at.** The audit finding was not found by review, by threat
 > modelling, or by the engineer who wrote the module. It was found by the route-coverage gate **on
@@ -250,22 +279,13 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 > none of them were *positioned* to notice a route that was never asked about. Nothing changed
 > about the team's care. What changed was that a gate now enumerates every route and requires an
 > answer for each one.
-| 9, 6 | **Secret scanning, in two positions** | **policy/CI** (+ a local convenience) | `.github/workflows/secret-scan.yml` — gitleaks on the **PR diff** (blocking) and a **weekly full-history sweep**; `.pre-commit-config.yaml` adds the same scanner as a hook. The two positions are not redundancy: the hook is **bypassable** with `git commit --no-verify`, so it is a fast local catch, and the CI job — which cannot be skipped — is the actual control. The history sweep exists because a secret committed before this gate existed is still a live credential that no diff scan will ever see. Allowlist in `.gitleaks.toml`, anchored so a placeholder must be the *whole* value |
-| 6 | **Admin session cookie carries its flags** | **middleware** | `src/app/admin/setup.py` passes `https_only=settings.is_production`, `same_site="lax"` through sqladmin to Starlette's `SessionMiddleware`, whose `https_only` defaults to **False**; `tests/test_admin.py::test_admin_session_cookie_is_hardened` asserts `Secure`/`HttpOnly`/`SameSite` **with production settings active**, and a companion test asserts dev-over-http still signs in — hardening that breaks local login gets reverted rather than fixed |
-| 11 | **PII redaction is a processor, not a call-site habit** | **middleware** | `src/app/core/logging.py::scrub_sensitive`, inserted ahead of **every** renderer so no formatting path bypasses it; recursive to any depth, container types preserved, key set from `settings.log_scrub_keys` (defaults: password, token, secret, authorization, api_key, email — matched case-insensitively as substrings, so `token` covers `access_token`). `tests/test_log_scrubbing.py` asserts on **rendered** output, including that non-sensitive fields survive verbatim |
-| 4, 7 | **Provider SDKs only at the adapter edge** | **policy/CI** (import-linter) | `.importlinter` contract *only the ai adapter layer may import a model-provider SDK*, with exactly one `ignore_imports` entry — `app.agents.example_agent -> anthropic`, marked TEMPORARY and deleted by W1. The rule lands before the module it governs, so W1 tightens the contract by **deletion** rather than by someone remembering to add it |
-| 3 | **Dev matches production for the privileged role** | **environment** (the role exists) | `template/scripts/init-db/01-privileged-role.sql`, mounted by `compose.yaml` into `/docker-entrypoint-initdb.d`; `tests/test_rls.py::test_compose_provisions_a_real_bypassrls_role` asserts the created role has `BYPASSRLS`, can log in, and that re-running the script is idempotent |
 
 ### Open follow-ups
 
 *Findings that become scheduled work move to the ledger ([ROADMAP.md](ROADMAP.md)); this list holds
 only what is open and unscheduled.*
 
-- ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED** — the local stack now
-  provisions a real `BYPASSRLS` role. Original note: `database_url_privileged` still falls back to
-| 3 | **Every tenant table is RLS-protected, or exempt by name** | **policy/CI** | `tests/test_rls.py::test_every_tenant_table_is_rls_protected` — enumerates every `organization_id`-bearing table from SQLAlchemy metadata, applies the real migration chain to Postgres, and requires each table to have a policy AND `FORCE`, or an entry in `RLS_EXEMPT_TABLES` with a stated reason. Metadata is the source of truth, so a new model is covered the moment it exists. A companion test rejects stale exemptions, scoped to capabilities the render actually ships |
-
-### Open follow-ups
+**Open.**
 
 - **`RLS-DEBT` · four tenant tables are exempted as debt, not design.** `usage_events`, `invoices`,
   `customer_wallets` and `outbox_events` carry `organization_id` with no policy — surfaced by the
@@ -273,12 +293,6 @@ only what is open and unscheduled.*
   decision rather than an invisible absence. Ledger ticket **P4-b** closes them and deletes the
   entries. `outbox_events` is low-risk (the relay already runs BYPASSRLS); `wallet_transactions`
   needs the denormalised `organization_id` column P4-b adds, having none today.
-
-- **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
-  `database_url`, so in a default local environment the "privileged" session is the ordinary app
-  role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
-  dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
-  *Filed, not implemented.*
 - **`FU-2` · `include_in_schema=False` bypasses the route-coverage gate.** The walker reads the
   OpenAPI document, so a route excluded from the schema is invisible to it — one keyword argument
   disables the check for that route. Direct route-table enumeration is not a viable alternative:
@@ -286,11 +300,17 @@ only what is open and unscheduled.*
   so the real routes cannot be reached from `app.routes`. Proposed mechanical fix: an AST gate over
   the template source asserting `include_in_schema=False` appears only at approved sites — policy/CI,
   and independent of framework internals. *Filed, not implemented.*
-- **`FU-3` · `leg-check.sh` should refuse a dirty worktree.** `copier --vcs-ref HEAD` renders
-  uncommitted edits, so a leg-check on a dirty tree validates something the commit does not contain
-  — the same "passed locally, failed CI" class the shared script exists to eliminate. It should
-  fail fast (or require an explicit override) when `git status --porcelain` is non-empty.
-  *Filed, not implemented.*
+
+**Closed** — kept for the audit trail; each names the position that now holds it.
+
+- ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED.** `database_url_privileged`
+  fell back to `database_url`, so a default local environment ran the "privileged" session as the
+  ordinary app role. The local compose stack now provisions a dedicated `BYPASSRLS` role, so the dev
+  topology matches production — the *Dev matches production for the privileged role* row above.
+- ~~**`FU-3` · `leg-check.sh` should refuse a dirty worktree.**~~ **CLOSED.** `copier --vcs-ref HEAD`
+  renders uncommitted edits, so a leg-check on a dirty tree validated something the commit did not
+  contain. `scripts/leg-check.sh` now fails fast when `git status --porcelain` is non-empty, with
+  `LEG_CHECK_ALLOW_DIRTY=1` as the deliberate override.
 
 ---
 
