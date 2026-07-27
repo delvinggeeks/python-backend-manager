@@ -6,6 +6,21 @@ it). It applies the *same* policy DDL the ``0008_rls`` migration applies, then s
 ``SELECT`` which omits ``WHERE organization_id`` returns only the current tenant's rows, that a
 cross-tenant write is rejected, and that the policy drops cleanly (round-trip). Skipped when
 Docker / testcontainers isn't available (e.g. the default SQLite-only test runs).
+
+EDITING THIS FILE — three traps, each of which has already cost a debugging cycle:
+
+1. **This file's CONTENT is not rendered.** Its *path* is gated
+   (``{% if include_rls %}test_rls.py{% endif %}``) but it has no ``.jinja`` suffix, so copier
+   copies it verbatim. A jinja tag written in this body lands literally and the file fails to
+   parse. Vary behaviour per capability at RUNTIME instead — see ``_tenant_tables_from_metadata``,
+   which imports optional model modules under ``contextlib.suppress(ImportError)``.
+2. **``importlib.util.find_spec`` RAISES ``ModuleNotFoundError``** when a *parent* package is
+   absent, rather than returning ``None``. Any presence check for an optional module needs the
+   guard, or a render without that capability errors instead of reporting "not present".
+3. **SQLAlchemy metadata only knows models that have been imported.** ``Base.metadata`` is empty
+   until the model modules are loaded for their registration side effect — the same reason
+   ``migrations/env.py`` imports them all. Enumerating tables without importing first silently
+   finds nothing, which looks like "no tenant tables" rather than "broken enumeration".
 """
 
 from __future__ import annotations
@@ -467,3 +482,159 @@ async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> No
         await owner.execute(_INIT_SQL.read_text())
     finally:
         await owner.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# RLS COVERAGE over the REAL tenant tables.
+#
+# The tests above prove the RLS MECHANISM against synthetic probe tables. They cannot notice a real
+# tenant table that was created without a policy — and a table added without one is invisible
+# exactly the way an unauthenticated route was, before the route-coverage gate existed.
+#
+# This gate enumerates every table carrying `organization_id` from SQLAlchemy metadata and requires
+# each to be policy-protected AND force-enabled, or to appear below with a stated reason.
+# ---------------------------------------------------------------------------------------------
+
+# Tables that carry `organization_id` and are deliberately NOT under RLS. Adding a line here is the
+# review moment: it is the only way to ship a tenant table without a policy.
+RLS_EXEMPT_TABLES: dict[str, str] = {
+    "memberships": (
+        "Cross-tenant BY DESIGN. `GET /orgs` lists the orgs a user belongs to, spanning tenants; "
+        "under a single-tenant GUC an RLS policy would return zero rows and break org listing. "
+        "Isolation for memberships is enforced at the application layer by get_current_membership."
+    ),
+    # --- DEBT, not design. Tracked as ledger ticket P4-b, which deletes these three entries. ---
+    # These carry organization_id and SHOULD be under RLS; they predate this gate, which is what
+    # made the gap invisible. Listed rather than silently missing, so the omission is a visible
+    # decision with an owner instead of an absence nobody can see.
+    "usage_events": (
+        "DEBT (P4-b): metering's append-only meter ledger. Deferred when metering shipped; the "
+        "app-level org scoping is the only isolation layer today."
+    ),
+    "invoices": ("DEBT (P4-b): rated invoices per org. Same deferral as usage_events."),
+    "outbox_events": (
+        "DEBT (P4-b): the transactional outbox carries organization_id and predates this gate. "
+        "Protecting it is LOW RISK and was verified as such while writing this list: the relay "
+        "already opens PrivilegedSessionFactory (BYPASSRLS), so a policy cannot starve it, and the "
+        "write path runs inside the caller's tenant transaction."
+    ),
+    "customer_wallets": (
+        "DEBT (P4-b): prepaid balance per org. Same deferral; note wallet_transactions has no "
+        "organization_id at all, which is the design decision P4-b resolves."
+    ),
+}
+
+
+def _tenant_tables_from_metadata() -> set[str]:
+    """Every table carrying `organization_id`, from SQLAlchemy metadata.
+
+    Model modules are imported for their side effect of registering tables on the shared
+    ``Base.metadata`` — the same reason ``migrations/env.py`` imports them. Absent modules are
+    skipped, so this works in every capability combination without jinja: THIS FILE'S PATH is
+    gated, but its content is copied verbatim, so a jinja tag here would land literally.
+
+    Metadata is the right source of truth: a new model with an `organization_id` column is covered
+    the moment it exists, with nobody having to remember to add it to a list.
+    """
+    import contextlib
+    import importlib
+
+    from app.db.models import Base
+
+    for module in (
+        "app.api_keys.models",
+        "app.audit.models",
+        "app.billing.models",
+        "app.metering.models",
+        "app.tenancy.models",
+        "app.webhooks.models",
+    ):
+        with contextlib.suppress(ImportError):
+            importlib.import_module(module)
+
+    return {name for name, table in Base.metadata.tables.items() if "organization_id" in table.c}
+
+
+async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
+    """Every `organization_id`-bearing table has a policy and FORCE, or is exempted by name.
+
+    Metadata is the source of truth for "is this a tenant table", so a new model with an
+    `organization_id` column is covered the moment it exists — nobody has to remember to add it.
+    """
+    tenant_tables = _tenant_tables_from_metadata()
+    assert tenant_tables, "no organization_id-bearing tables found — the enumeration is broken"
+
+    owner_async = "postgresql+asyncpg://" + postgres_dsn.split("://", 1)[1]
+    migrate = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": owner_async},
+        capture_output=True,
+        text=True,
+    )
+    assert migrate.returncode == 0, f"alembic upgrade head failed:\n{migrate.stderr}"
+
+    conn = await asyncpg.connect(postgres_dsn)
+    try:
+        with_policy = {
+            r["tablename"]
+            for r in await conn.fetch(
+                "SELECT DISTINCT tablename FROM pg_policies WHERE schemaname = 'public'"
+            )
+        }
+        forced = {
+            r["relname"]
+            for r in await conn.fetch(
+                "SELECT relname FROM pg_class WHERE relrowsecurity AND relforcerowsecurity"
+            )
+        }
+    finally:
+        await conn.close()
+
+    unprotected = sorted(
+        table
+        for table in tenant_tables
+        if table not in RLS_EXEMPT_TABLES and not (table in with_policy and table in forced)
+    )
+    assert not unprotected, (
+        f"these tables carry organization_id but are not protected by FORCE'd RLS: {unprotected}. "
+        "Either add them to the migration's _TENANT_TABLES, or add them to RLS_EXEMPT_TABLES with "
+        "the reason they are deliberately cross-tenant."
+    )
+
+
+# The module each exemption belongs to. An exemption for a capability this render does not ship is
+# absent, not stale — only a table whose OWNING MODULE is present can have gone away.
+_EXEMPTION_OWNER: dict[str, str] = {
+    "memberships": "app.tenancy.models",
+    "outbox_events": "app.webhooks.models",
+    "usage_events": "app.metering.models",
+    "invoices": "app.metering.models",
+    "customer_wallets": "app.metering.models",
+}
+
+
+async def test_rls_exemptions_are_not_stale(postgres_dsn: str) -> None:
+    """An exemption outliving its table pre-approves the next table to reuse the name."""
+    import importlib.util
+
+    def _module_present(name: str) -> bool:
+        # find_spec RAISES ModuleNotFoundError when a parent package is absent, rather than
+        # returning None — so a capability this render does not ship raises rather than reports.
+        try:
+            return importlib.util.find_spec(name) is not None
+        except ModuleNotFoundError:
+            return False
+
+    tenant_tables = _tenant_tables_from_metadata()
+    assert set(_EXEMPTION_OWNER) == set(RLS_EXEMPT_TABLES), (
+        "every exemption needs an owning module in _EXEMPTION_OWNER, or staleness cannot be judged"
+    )
+    stale = sorted(
+        name
+        for name in RLS_EXEMPT_TABLES
+        if name not in tenant_tables and _module_present(_EXEMPTION_OWNER[name])
+    )
+    assert not stale, (
+        f"RLS_EXEMPT_TABLES names tables this service has the module for but no longer defines: "
+        f"{stale}. Remove them — a stale exemption pre-approves the next table to reuse the name."
+    )

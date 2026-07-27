@@ -260,6 +260,18 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 
 - ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED** — the local stack now
   provisions a real `BYPASSRLS` role. Original note: `database_url_privileged` still falls back to
+| 3 | **Every tenant table is RLS-protected, or exempt by name** | **policy/CI** | `tests/test_rls.py::test_every_tenant_table_is_rls_protected` — enumerates every `organization_id`-bearing table from SQLAlchemy metadata, applies the real migration chain to Postgres, and requires each table to have a policy AND `FORCE`, or an entry in `RLS_EXEMPT_TABLES` with a stated reason. Metadata is the source of truth, so a new model is covered the moment it exists. A companion test rejects stale exemptions, scoped to capabilities the render actually ships |
+
+### Open follow-ups
+
+- **`RLS-DEBT` · four tenant tables are exempted as debt, not design.** `usage_events`, `invoices`,
+  `customer_wallets` and `outbox_events` carry `organization_id` with no policy — surfaced by the
+  gate above on its first run, and listed in `RLS_EXEMPT_TABLES` so the omission is a visible
+  decision rather than an invisible absence. Ledger ticket **P4-b** closes them and deletes the
+  entries. `outbox_events` is low-risk (the relay already runs BYPASSRLS); `wallet_transactions`
+  needs the denormalised `organization_id` column P4-b adds, having none today.
+
+- **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
   `database_url`, so in a default local environment the "privileged" session is the ordinary app
   role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
   dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
