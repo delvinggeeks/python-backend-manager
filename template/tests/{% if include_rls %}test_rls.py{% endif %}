@@ -6,6 +6,21 @@ it). It applies the *same* policy DDL the ``0008_rls`` migration applies, then s
 ``SELECT`` which omits ``WHERE organization_id`` returns only the current tenant's rows, that a
 cross-tenant write is rejected, and that the policy drops cleanly (round-trip). Skipped when
 Docker / testcontainers isn't available (e.g. the default SQLite-only test runs).
+
+EDITING THIS FILE — three traps, each of which has already cost a debugging cycle:
+
+1. **This file's CONTENT is not rendered.** Its *path* is gated
+   (``{% if include_rls %}test_rls.py{% endif %}``) but it has no ``.jinja`` suffix, so copier
+   copies it verbatim. A jinja tag written in this body lands literally and the file fails to
+   parse. Vary behaviour per capability at RUNTIME instead — see ``_tenant_tables_from_metadata``,
+   which imports optional model modules under ``contextlib.suppress(ImportError)``.
+2. **``importlib.util.find_spec`` RAISES ``ModuleNotFoundError``** when a *parent* package is
+   absent, rather than returning ``None``. Any presence check for an optional module needs the
+   guard, or a render without that capability errors instead of reporting "not present".
+3. **SQLAlchemy metadata only knows models that have been imported.** ``Base.metadata`` is empty
+   until the model modules are loaded for their registration side effect — the same reason
+   ``migrations/env.py`` imports them all. Enumerating tables without importing first silently
+   finds nothing, which looks like "no tenant tables" rather than "broken enumeration".
 """
 
 from __future__ import annotations
