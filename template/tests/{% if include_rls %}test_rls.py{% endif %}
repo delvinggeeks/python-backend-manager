@@ -495,15 +495,12 @@ RLS_EXEMPT_TABLES: dict[str, str] = {
         "DEBT (P4-b): metering's append-only meter ledger. Deferred when metering shipped; the "
         "app-level org scoping is the only isolation layer today."
     ),
-    "invoices": (
-        "DEBT (P4-b): rated invoices per org. Same deferral as usage_events."
-    ),
+    "invoices": ("DEBT (P4-b): rated invoices per org. Same deferral as usage_events."),
     "customer_wallets": (
         "DEBT (P4-b): prepaid balance per org. Same deferral; note wallet_transactions has no "
         "organization_id at all, which is the design decision P4-b resolves."
     ),
 }
-
 
 
 def _tenant_tables_from_metadata() -> set[str]:
@@ -557,12 +554,14 @@ async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
     conn = await asyncpg.connect(postgres_dsn)
     try:
         with_policy = {
-            r["tablename"] for r in await conn.fetch(
+            r["tablename"]
+            for r in await conn.fetch(
                 "SELECT DISTINCT tablename FROM pg_policies WHERE schemaname = 'public'"
             )
         }
         forced = {
-            r["relname"] for r in await conn.fetch(
+            r["relname"]
+            for r in await conn.fetch(
                 "SELECT relname FROM pg_class WHERE relrowsecurity AND relforcerowsecurity"
             )
         }
@@ -610,8 +609,7 @@ async def test_rls_exemptions_are_not_stale(postgres_dsn: str) -> None:
     stale = sorted(
         name
         for name in RLS_EXEMPT_TABLES
-        if name not in tenant_tables
-        and _module_present(_EXEMPTION_OWNER[name])
+        if name not in tenant_tables and _module_present(_EXEMPTION_OWNER[name])
     )
     assert not stale, (
         f"RLS_EXEMPT_TABLES names tables this service has the module for but no longer defines: "
