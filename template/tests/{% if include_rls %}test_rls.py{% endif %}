@@ -435,7 +435,9 @@ def test_every_session_factory_is_tagged_with_an_rls_mode() -> None:
 # that same file to a throwaway Postgres and asserts the role it creates is genuinely privileged.
 # ---------------------------------------------------------------------------------------------
 
-_INIT_SQL = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "init-db" / "01-privileged-role.sql"
+_INIT_SQL = (
+    pathlib.Path(__file__).resolve().parents[1] / "scripts" / "init-db" / "01-privileged-role.sql"
+)
 
 
 async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> None:
