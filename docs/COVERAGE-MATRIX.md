@@ -7,6 +7,10 @@
 > phases P27-P30, specs land as the in-flight research completes) · **➖ noted gap** (small fold or
 > deliberate defer) · **⛔ out-of-scope** (frontend/business/ops, not a backend-template concern).
 > Full reasoning in [GAP-ANALYSIS.md](GAP-ANALYSIS.md) / [AI-AGENTIC-STACK.md](AI-AGENTIC-STACK.md).
+>
+> **This file is the single home for "is it shipped?".** Other documents point here rather than
+> keeping their own inventory — a fact with three homes is a fact that goes stale in two of them,
+> which is exactly what happened to the rows below before this sweep.
 
 ---
 
@@ -14,7 +18,7 @@
 | Subsystem | Status | Where |
 |---|---|---|
 | Auth: register / login / reset / verify (JWT, argon2) | ✅ | `users` |
-| Session hardening: refresh rotation, revocation, logout-all | 📋 | P3 |
+| Session hardening: refresh rotation, revocation, logout-all | ✅ | `users` (P3, v0.30.0) |
 | MFA (TOTP) / passkeys (WebAuthn) | 📋 | P13 |
 | Enterprise SSO (SAML/OIDC) · SCIM · JIT | 📋 | P13 (AuthnPort) |
 | Authorization: role hierarchy → ReBAC/ABAC seam | ✅/📋 | rbac + P10 |
@@ -96,9 +100,9 @@
 | PII field-level encryption + KMS | 📋 | P15 |
 | Data residency (India / DPDP 2023) | 📋 | P15 |
 | GDPR/DPDP export + right-to-be-forgotten | 📋 | P16 |
-| Webhook **SSRF egress guard** | 📋 | P1 |
-| Ingress security headers + CORS lockdown | 📋 | P2 |
-| Supply-chain (SBOM · Trivy · Cosign · SHA-pin) | 📋 | P2 |
+| Webhook **SSRF egress guard** | ✅ | `webhooks` (P1, v0.19.0) |
+| Ingress security headers + CORS lockdown | ✅ | base (P2, v0.20.0) |
+| Supply-chain (SBOM · Trivy · Cosign · SHA-pin) | ✅ | CI (P2c, v0.27-29) |
 | Rate limiting + auth-abuse protection | ✅ | `ratelimit` (P8) |
 | **AI agent system-safety** (least-privilege, sandbox, HITL approval) | 🆕 | P29 |
 
@@ -106,7 +110,7 @@
 | Subsystem | Status | Where |
 |---|---|---|
 | API versioning + cursor pagination + deprecation headers | 📋 | P17 |
-| Idempotency | 📋 | P6 |
+| Idempotency | ✅ | `idempotency` (P6, v0.33.0) |
 | Feature flags | 📋 | P18 |
 | **Mobile / BFF backend support** (offline-sync, version-gate, APNs, attestation) | 🆕 | P28 |
 | **Real-time** | 🆕 | P27 |

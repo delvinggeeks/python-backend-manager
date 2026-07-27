@@ -217,6 +217,18 @@ jobs:
         # the drift only surfaces as "it passed locally but CI disagrees".
         run: bash scripts/leg-check.sh /tmp/generated ${{ matrix.extras }}
 
+  # Always-read documents are a tax on every session's context window, so their length is budgeted
+  # in .doc-budgets.toml and checked here. Repo-CI only, deliberately: these are template-repo docs
+  # that never render into a generated service, so running this inside leg-check.sh would repeat the
+  # identical check 23 times per PR and assert nothing about the generated project.
+  doc-budgets:
+    name: "doc budgets"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check always-read documents against their committed budgets
+        run: python3 scripts/check-doc-budgets.py
+
   # Single STABLE required status check that gates auto-merge on the whole capability
   # matrix. It aggregates the matrix via `needs`, so adding a capability row above is
   # covered automatically and branch protection never has to change.
@@ -253,7 +265,7 @@ jobs:
   #                    feed must never hard-block the autonomous merge.
   ci-ok:
     name: ci-ok
-    needs: [generate-and-test, generate-capability, generate-capability-gate]
+    needs: [generate-and-test, generate-capability, generate-capability-gate, doc-budgets]
     if: always()
     runs-on: ubuntu-latest
     steps:

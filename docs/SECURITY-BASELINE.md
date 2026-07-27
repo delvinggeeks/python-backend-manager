@@ -258,6 +258,9 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 
 ### Open follow-ups
 
+*Findings that become scheduled work move to the ledger ([ROADMAP.md](ROADMAP.md)); this list holds
+only what is open and unscheduled.*
+
 - ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED** — the local stack now
   provisions a real `BYPASSRLS` role. Original note: `database_url_privileged` still falls back to
 | 3 | **Every tenant table is RLS-protected, or exempt by name** | **policy/CI** | `tests/test_rls.py::test_every_tenant_table_is_rls_protected` — enumerates every `organization_id`-bearing table from SQLAlchemy metadata, applies the real migration chain to Postgres, and requires each table to have a policy AND `FORCE`, or an entry in `RLS_EXEMPT_TABLES` with a stated reason. Metadata is the source of truth, so a new model is covered the moment it exists. A companion test rejects stale exemptions, scoped to capabilities the render actually ships |
