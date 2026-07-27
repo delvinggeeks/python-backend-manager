@@ -52,6 +52,33 @@ PUBLIC_ROUTES: frozenset[str] = frozenset(
 
 _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
+# ---------------------------------------------------------------------------------------------
+# APPROVED SCHEMA EXCLUSIONS — every route hidden from the OpenAPI document.
+#
+# `include_in_schema=False` removes a route from the document, and the walker above reads the
+# document. A hidden route is therefore invisible to the route-coverage gate: one keyword argument
+# silently exempts an endpoint from the check. That is not hypothetical — a hidden, unauthenticated
+# `/internal/debug-config` returns 200 with the database URL in it and the walker stays green.
+#
+# So the exclusions are enumerated here instead, keyed by "<source file>::<route path>", each with
+# the reason it is not an application endpoint. Adding a hidden route means adding a line here, and
+# that line is the review moment — same contract as PUBLIC_ROUTES.
+# ---------------------------------------------------------------------------------------------
+APPROVED_SCHEMA_EXCLUSIONS: dict[str, str] = {
+{% if include_observability %}
+    "app/observability/health.py::/healthz": (
+        "Liveness probe. Consumed by an orchestrator on a network path that segmentation, not "
+        "application auth, is responsible for. Returns no tenant data."
+    ),
+    "app/observability/health.py::/readyz": (
+        "Readiness probe. Reports dependency reachability only — never data, never identifiers."
+    ),
+    "app/observability/setup.py::/metrics": (
+        "Prometheus scrape endpoint. Aggregate counters only; protected at the network layer."
+    ),
+{% endif %}
+}
+
 
 def _operations() -> list[tuple[str, dict]]:
     """Every (name, operation) pair in the service's OpenAPI document."""
@@ -107,3 +134,73 @@ async def test_agent_endpoint_rejects_an_unauthenticated_call(client) -> None:
         "billable endpoint is a denial-of-wallet surface"
     )
 {% endif %}
+
+
+def test_no_unapproved_schema_exclusions() -> None:
+    """A hidden route bypasses the walker entirely, so hiding one is itself gated.
+
+    `include_in_schema=False` takes a route out of the OpenAPI document, and the coverage test
+    above reads that document — so a hidden endpoint is exempt from the auth check by construction.
+    This walks the source instead of the document, which is the only vantage point that can see a
+    route the document omits. Deliberately independent of FastAPI internals: enumerating routes from
+    `app.routes` is not viable, since an included router is wrapped in an internal object that
+    exposes no `.routes`.
+    """
+    import ast
+    import pathlib
+
+    unapproved: list[str] = []
+    for path in sorted(pathlib.Path("src/app").rglob("*.py")):
+        rel = path.relative_to("src").as_posix()
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            hides = any(
+                kw.arg == "include_in_schema"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is False
+                for kw in node.keywords
+            )
+            if not hides:
+                continue
+            route = next(
+                (a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)),
+                "<unknown>",
+            )
+            key = f"{rel}::{route}"
+            if key not in APPROVED_SCHEMA_EXCLUSIONS:
+                unapproved.append(f"{key} (line {node.lineno})")
+
+    assert not unapproved, (
+        "these routes are hidden from the OpenAPI document, which exempts them from the "
+        f"route-coverage gate above: {unapproved}. Either stop hiding the route so the gate can "
+        "check it, or add it to APPROVED_SCHEMA_EXCLUSIONS with the reason it is not an "
+        "application endpoint."
+    )
+
+
+def test_approved_schema_exclusions_are_not_stale() -> None:
+    """Same contract as PUBLIC_ROUTES: an approval outliving its route pre-approves the next one."""
+    import ast
+    import pathlib
+
+    present: set[str] = set()
+    for path in sorted(pathlib.Path("src/app").rglob("*.py")):
+        rel = path.relative_to("src").as_posix()
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call) and any(
+                kw.arg == "include_in_schema"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is False
+                for kw in node.keywords
+            ):
+                route = next(
+                    (a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)),
+                    "<unknown>",
+                )
+                present.add(f"{rel}::{route}")
+
+    stale = sorted(set(APPROVED_SCHEMA_EXCLUSIONS) - present)
+    assert not stale, (
+        f"APPROVED_SCHEMA_EXCLUSIONS lists routes this service does not hide: {stale}. Remove them."
+    )
