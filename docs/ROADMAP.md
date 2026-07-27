@@ -63,6 +63,16 @@ form is layered instead: `Read(.env)` (bare, so any depth) plus `Read(/.env.*)` 
 any suffix at the repo root, enumerated or not) plus bare rules for the conventional suffixes. Two
 findings the old rule had been concealing are filed above as **ENV-1** and **GIT-1**.*
 
+*`ENV-1` exits with its own PR. It was larger than filed: the consumer name was in the **settings
+default** too (`Settings.app_name`), so a service that never set `APP_NAME` still got it, and
+`.env.example`'s database credentials **disagreed with the compose stack they describe** — copying
+the file produced an authentication failure, a functional defect rather than a cosmetic one. The
+model-cascade duplication was resolved by deletion, not by picking values: the single home is
+`Settings.model_fast`/`model_default`/`model_frontier`, and the example now points at it. The
+renamed `.jinja` path had to be un-ignored in `template/.gitignore`, whose `.env.*` rule governs
+`template/` in this repo as well as shipping into services. **ENV-2** files what the render still
+carries: `SECURITY.md` is verbatim, so every service sends vulnerability reports to one company.*
+
 ### P4-b · Close the metering + outbox RLS gap
 
 - **Deliverable:** every table exempted as DEBT in `RLS_EXEMPT_TABLES` carries a tenant policy, and
@@ -103,27 +113,6 @@ findings the old rule had been concealing are filed above as **ENV-1** and **GIT
   read as green), the two drifted files. Consider `scripts/` in the pre-commit config too — but the
   hook is bypassable, so CI is the control and the hook is the convenience.
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one job, two reformats.
-
-### ENV-1 · `template/.env.example` is copied verbatim and ships a consumer name
-
-- **Deliverable:** the file is rendered, not copied, so no generated service carries another
-  project's identity.
-- **Evidence:** `template/.env.example` has **no `.jinja` suffix**, so copier copies it byte-for-byte
-  into every service. It ships `APP_NAME=witaura-backend` and
-  `DATABASE_URL=postgresql+asyncpg://witaura:witaura@localhost:5432/witaura` — a specific consumer's
-  name, hardcoded, in every backend this template has ever generated. `project_slug` exists and is
-  exactly the value that belongs there.
-- **Second defect, same file:** `MODEL_DEFAULT=claude-sonnet-4-6` and `MODEL_FRONTIER=claude-opus-4-8`
-  are previous-generation IDs (`MODEL_FAST` is current). The model cascade is the one setting a new
-  service is most likely to keep as-is.
-- **Why it went unseen:** the `Read(./.env.*)` deny that DEV-1 narrows made this file unreadable, so
-  no session could review it. A control positioned more broadly than its purpose does not just block
-  work — it hides the defects inside what it blocks.
-- **Failing-test-first:** render a service and assert `APP_NAME` matches the requested slug; it will
-  read `witaura-backend`.
-- **File set:** `template/.env.example` → `template/.env.example.jinja`, via `git mv` so the gate on
-  path renames stays honest. Check `copier.yml` for an `_exclude` interaction first.
-- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one rename, three substitutions.
 
 ### GIT-1 · Root `.gitignore` does not ignore `.env`
 
