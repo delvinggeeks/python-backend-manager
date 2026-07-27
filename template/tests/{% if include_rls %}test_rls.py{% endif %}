@@ -483,7 +483,7 @@ async def test_compose_provisions_a_real_bypassrls_role(postgres_dsn: str) -> No
 # review moment: it is the only way to ship a tenant table without a policy.
 RLS_EXEMPT_TABLES: dict[str, str] = {
     "memberships": (
-        "Cross-tenant BY DESIGN. `GET /orgs` lists the orgs a user belongs to, which spans tenants; "
+        "Cross-tenant BY DESIGN. `GET /orgs` lists the orgs a user belongs to, spanning tenants; "
         "under a single-tenant GUC an RLS policy would return zero rows and break org listing. "
         "Isolation for memberships is enforced at the application layer by get_current_membership."
     ),
