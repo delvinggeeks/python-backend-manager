@@ -56,6 +56,13 @@ at 14 matching files. Both latent sites were converted anyway. Verified by dispa
 [run 30287201659](https://github.com/delvinggeeks/python-backend-manager/actions/runs/30287201659)
 completed and opened issue #77 — the first harvest that has ever existed.*
 
+*`DEV-1` exits the same way. Its rule was rebuilt against **measured** matcher behaviour, not against
+the documented syntax: allow cannot override deny, `!` negation is ignored, and a `[!e]` character
+class **fails open** — the probe that used one silently stopped denying `.env.local`. The shipped
+form is layered instead: `Read(.env)` (bare, so any depth) plus `Read(/.env.*)` (root-anchored, so
+any suffix at the repo root, enumerated or not) plus bare rules for the conventional suffixes. Two
+findings the old rule had been concealing are filed above as **ENV-1** and **GIT-1**.*
+
 ### P4-b · Close the metering + outbox RLS gap
 
 - **Deliverable:** every table exempted as DEBT in `RLS_EXEMPT_TABLES` carries a tenant policy, and
@@ -97,20 +104,42 @@ completed and opened issue #77 — the first harvest that has ever existed.*
   hook is bypassable, so CI is the control and the hook is the convenience.
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one job, two reformats.
 
-### DEV-1 · Narrow the settings Read deny-rule to real env files
+### ENV-1 · `template/.env.example` is copied verbatim and ships a consumer name
 
-- **Deliverable:** `.claude/settings.json`'s `Read(./.env.*)` deny narrows so `.env.example` is
-  readable while real env files stay denied.
-- **Done-contract sketch:** reading `.env.example` succeeds; reading `.env` and `.env.local` is
-  still refused. The rule blocked a legitimate edit during T1, where `.env.example` — a file of
-  placeholders — could not be read to document a setting.
-- **Failing-test-first:** attempt to read `template/.env.example` and observe the current denial;
-  that denial is the failing state.
-- **File set:** `.claude/settings.json`.
-- **Blocked-by:** none. **Blocks:** none.
-- **AFK.** **Sized:** yes — a one-line pattern change plus a two-case verification.
+- **Deliverable:** the file is rendered, not copied, so no generated service carries another
+  project's identity.
+- **Evidence:** `template/.env.example` has **no `.jinja` suffix**, so copier copies it byte-for-byte
+  into every service. It ships `APP_NAME=witaura-backend` and
+  `DATABASE_URL=postgresql+asyncpg://witaura:witaura@localhost:5432/witaura` — a specific consumer's
+  name, hardcoded, in every backend this template has ever generated. `project_slug` exists and is
+  exactly the value that belongs there.
+- **Second defect, same file:** `MODEL_DEFAULT=claude-sonnet-4-6` and `MODEL_FRONTIER=claude-opus-4-8`
+  are previous-generation IDs (`MODEL_FAST` is current). The model cascade is the one setting a new
+  service is most likely to keep as-is.
+- **Why it went unseen:** the `Read(./.env.*)` deny that DEV-1 narrows made this file unreadable, so
+  no session could review it. A control positioned more broadly than its purpose does not just block
+  work — it hides the defects inside what it blocks.
+- **Failing-test-first:** render a service and assert `APP_NAME` matches the requested slug; it will
+  read `witaura-backend`.
+- **File set:** `template/.env.example` → `template/.env.example.jinja`, via `git mv` so the gate on
+  path renames stays honest. Check `copier.yml` for an `_exclude` interaction first.
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — one rename, three substitutions.
 
----
+### GIT-1 · Root `.gitignore` does not ignore `.env`
+
+- **Deliverable:** a real `.env` in this repo cannot be staged by accident.
+- **Evidence:** the root `.gitignore` lists caches, `.venv`, `.claude/settings.local.json` and
+  `.claude/slice-scope` — and no env rule at all. Probe files named `.env`, `.env.local` and
+  `.env.production` were created at the repo root during DEV-1 and `git status` listed all three as
+  untracked-and-stageable. `template/.gitignore:16-18` already does this correctly
+  (`.env`, `.env.*`, `!.env.example`); only the manager repo is missing it.
+- **Severity: low but not zero.** Nobody runs a service here, so a real `.env` is unlikely — but the
+  gitleaks CI gate is a *diff* scanner, so it would catch the secret only after it was committed.
+- **Failing-test-first:** `printf 'X=y\n' > .env && git status --porcelain` lists it. That is the
+  failing state.
+- **File set:** `.gitignore`. Copy the three lines from `template/.gitignore`.
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — three lines.
+
 
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
