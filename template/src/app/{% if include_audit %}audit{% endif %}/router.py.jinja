@@ -3,7 +3,9 @@
 Org-scoped (``GET /orgs/{org_id}/audit``), authorised by the caller's membership in
 ``{org_id}``{% if include_rbac %} and gated to the ``admin`` role or higher{% endif %}. Results are paginated, newest first.
 {% else %}
-Flat (``GET /audit``){% if include_users or include_admin %}, requiring an authenticated user{% endif %}. Results are paginated, newest first.
+{% if include_users or include_admin %}Flat (``GET /audit``), requiring an authenticated user. Results are
+paginated, newest first.{% else %}No read endpoint — with no identity capability there is nothing to
+authenticate a reader with, so the log is write-only (``record`` still appends).{% endif %}
 {% endif %}"""
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ async def list_audit_logs(
     items = [_to_read(entry) for entry in result.scalars().all()]
     return AuditLogPage(items=items, total=int(total or 0), limit=limit, offset=offset)
 {% else %}
+{% if include_users or include_admin %}
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -69,11 +72,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.models import AuditLog
 from app.audit.schemas import AuditLogPage, AuditLogRead
 from app.db.session import get_session
-{% if include_users or include_admin %}from app.users import current_active_user
+from app.users import current_active_user
 from app.users.models import User
-{% endif %}
 
 router = APIRouter()
+{% else %}
+
+from fastapi import APIRouter
+
+# NO READ ENDPOINT. This service has no identity capability, so there is no dependency that could
+# authenticate a reader — and an anonymously-readable append-only audit log (actor, action, target,
+# metadata) is a disclosure of the security record itself. Writing is unaffected: `app.audit.record`
+# still appends. Enable the users capability to expose the read API with authentication.
+router = APIRouter()
+{% endif %}
+{% if include_users or include_admin %}
 
 
 def _to_read(entry: AuditLog) -> AuditLogRead:
@@ -92,9 +105,7 @@ def _to_read(entry: AuditLog) -> AuditLogRead:
 async def list_audit_logs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1_000_000),
-{% if include_users or include_admin %}
     user: User = Depends(current_active_user),
-{% endif %}
     session: AsyncSession = Depends(get_session),
 ) -> AuditLogPage:
     """List audit events, newest first. Read-only — the log is append-only."""
@@ -104,4 +115,5 @@ async def list_audit_logs(
     )
     items = [_to_read(entry) for entry in result.scalars().all()]
     return AuditLogPage(items=items, total=int(total or 0), limit=limit, offset=offset)
+{% endif %}
 {% endif %}

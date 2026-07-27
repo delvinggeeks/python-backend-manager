@@ -230,12 +230,45 @@ CROSS-TENANT READ: a consumer that set no tenant context read ['a']
 because the connection still carried app.current_tenant='b2e23a62-…'
 ```
 
+| 4 | **Every route is authenticated, or explicitly public** | **policy/CI** | `tests/test_route_auth.py::test_every_route_is_authenticated_or_explicitly_public` — walks the service's own OpenAPI document; an operation with no security requirement must appear by exact `"METHOD /path"` name in the committed `PUBLIC_ROUTES` frozenset. Runs in every capability leg, since the route set varies by flag |
+| 4 | The allow-list **cannot accumulate dead entries** | **policy/CI** | `tests/test_route_auth.py::test_the_allow_list_has_no_stale_entries` — an entry naming a route the service does not expose fails the build, so `PUBLIC_ROUTES` stays a live contract rather than an append-only pre-authorization cache |
+| 4 | `POST /agent` is **authenticated**, not merely rate-limited | **middleware** | `src/app/api/routes/agent.py` — `get_principal` (JWT *or* API key) where `api_keys` ships, else `current_active_user`; proven at the request level by `tests/test_health.py::test_agent_requires_authentication` asserting **401** |
+| — | Local validation and CI **cannot drift** | **policy/CI** | `scripts/leg-check.sh` is the single definition of "a leg passed"; `.github/workflows/ci.yml` invokes that same script with the same arguments |
+| — | Slice branches **cannot absorb unrelated changes** | **environment** (agent harness) | `.claude/hooks/staged-scope.sh`, a PreToolUse guard refusing a commit whose staged paths fall outside `.claude/slice-scope` |
+| 4 | **No anonymously-readable audit log** | **environment** (the route does not exist) | `src/app/audit/router.py` mounts the flat `GET /audit` only under an identity capability; `tests/test_audit.py::test_audit_read_endpoint_is_not_mounted_without_an_identity_capability` asserts 404 otherwise. `record()` is unaffected — the log still appends, it just has no HTTP reader until a reader can be authenticated |
+
+> **Why this row is the one to point at.** The audit finding was not found by review, by threat
+> modelling, or by the engineer who wrote the module. It was found by the route-coverage gate **on
+> its first full-matrix run**, in a module **outside the slice being worked on**, in code that had
+> already shipped and been read. The flat `GET /audit` attached its auth dependency only under
+> `{% if include_users or include_admin %}`, so an audit-only service published its entire
+> append-only log — actor, action, target, JSON metadata, paginated — to anonymous callers.
+>
+> That is the argument of this whole document in one incident. A control's **position** is what
+> makes it real: the same defect had survived every prose-level protection available — a docstring
+> that described the endpoint as authenticated, a code review, and a passing test suite — because
+> none of them were *positioned* to notice a route that was never asked about. Nothing changed
+> about the team's care. What changed was that a gate now enumerates every route and requires an
+> answer for each one.
+
 ### Open follow-ups
 
 - **`FU-1` · dev/prod parity for the privileged role.** `database_url_privileged` still falls back to
   `database_url`, so in a default local environment the "privileged" session is the ordinary app
   role. The fail-fast above now makes that loud rather than silent, but the fix is to provision a
   dedicated `BYPASSRLS` role in the local compose stack so the dev topology matches production.
+  *Filed, not implemented.*
+- **`FU-2` · `include_in_schema=False` bypasses the route-coverage gate.** The walker reads the
+  OpenAPI document, so a route excluded from the schema is invisible to it — one keyword argument
+  disables the check for that route. Direct route-table enumeration is not a viable alternative:
+  FastAPI 0.137 wraps included routers in an internal `_IncludedRouter` that exposes no `.routes`,
+  so the real routes cannot be reached from `app.routes`. Proposed mechanical fix: an AST gate over
+  the template source asserting `include_in_schema=False` appears only at approved sites — policy/CI,
+  and independent of framework internals. *Filed, not implemented.*
+- **`FU-3` · `leg-check.sh` should refuse a dirty worktree.** `copier --vcs-ref HEAD` renders
+  uncommitted edits, so a leg-check on a dirty tree validates something the commit does not contain
+  — the same "passed locally, failed CI" class the shared script exists to eliminate. It should
+  fail fast (or require an explicit override) when `git status --porcelain` is non-empty.
   *Filed, not implemented.*
 
 ---

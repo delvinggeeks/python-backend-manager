@@ -23,9 +23,7 @@
       "WebFetch(domain:code.claude.com)",
       "WebFetch(domain:pypi.org)"
     ],
-    "ask": [
-
-    ],
+    "ask": [],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
@@ -37,7 +35,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-pip.sh\"" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-pip.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/staged-scope.sh\""
+          }
         ]
       }
     ],
@@ -45,7 +50,10 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-format.sh\"" }
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-format.sh\""
+          }
         ]
       }
     ]

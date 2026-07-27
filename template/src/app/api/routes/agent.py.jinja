@@ -1,27 +1,51 @@
 """Example agentic endpoint. Returns 503 if no agent backend is configured."""
 
+{% set _has_identity = include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+{% set _guarded = _has_identity or include_ratelimit %}
 from __future__ import annotations
 
-{% if include_ratelimit %}
+{% if _guarded %}
 from fastapi import APIRouter, Depends, HTTPException, status
 {% else %}
 from fastapi import APIRouter, HTTPException, status
 {% endif %}
 
 from app.agents.example_agent import AgentUnavailableError, run_agent
+{% if include_api_keys %}
+from app.api_keys.dependencies import get_principal
+{% endif %}
 {% if include_ratelimit %}
 from app.ratelimit import rate_limit
 {% endif %}
 from app.schemas.common import AgentRequest, AgentResponse
+{% if _has_identity and not include_api_keys %}
+from app.users import current_active_user
+{% endif %}
 
 router = APIRouter()
 
 
+{% if _guarded %}
+# The expensive endpoint is the one worth protecting twice over. An LLM call costs real money per
+# request, so it is AUTHENTICATED — an unauthenticated billable endpoint is a denial-of-wallet
+# surface, not merely an access-control gap — and rate-limited on top. A render that ships no
+# credential system has no dependency to attach; that case is recorded explicitly, and visibly, in
+# the PUBLIC_ROUTES allow-list in tests/test_route_auth.py.
+@router.post(
+    "",
+    response_model=AgentResponse,
+    dependencies=[
+{% if include_api_keys %}
+        # Either a JWT or an API key — machine callers are first-class for this endpoint.
+        Depends(get_principal),
+{% elif _has_identity %}
+        Depends(current_active_user),
+{% endif %}
 {% if include_ratelimit %}
-# The expensive endpoint is the one worth protecting: an LLM call costs real money per request, so
-# it carries the caller's plan budget (per-org when org-scoped, else per client IP). Fail-open — a
-# Redis outage never turns into a 429.
-@router.post("", response_model=AgentResponse, dependencies=[Depends(rate_limit())])
+        Depends(rate_limit()),
+{% endif %}
+    ],
+)
 {% else %}
 @router.post("", response_model=AgentResponse)
 {% endif %}

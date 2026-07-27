@@ -109,6 +109,7 @@ async def test_org_audit_log_is_append_only(client: AsyncClient) -> None:
     r = await client.delete(f"/orgs/{org_id}/audit", headers=auth)
     assert r.status_code == 405
 {% else %}
+{% if include_users or include_admin %}
 
 
 async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) -> None:
@@ -116,7 +117,6 @@ async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) ->
         await record(session, "thing.one", actor="sys")
         await record(session, "thing.two", actor="sys")
         await session.commit()
-{% if include_users or include_admin %}
     reg = {"email": "reader@example.com", "password": "s3cret-passw0rd"}
     r = await client.post("/auth/register", json=reg)
     assert r.status_code == 201, r.text
@@ -124,9 +124,6 @@ async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) ->
         "/auth/jwt/login", data={"username": reg["email"], "password": reg["password"]}
     )
     headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
-{% else %}
-    headers: dict[str, str] = {}
-{% endif %}
     r = await client.get("/audit", headers=headers)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -136,7 +133,6 @@ async def test_flat_audit_endpoint_lists_recorded_events(client: AsyncClient) ->
 
 
 async def test_flat_audit_log_is_append_only(client: AsyncClient) -> None:
-{% if include_users or include_admin %}
     reg = {"email": "writer@example.com", "password": "s3cret-passw0rd"}
     r = await client.post("/auth/register", json=reg)
     assert r.status_code == 201, r.text
@@ -144,12 +140,30 @@ async def test_flat_audit_log_is_append_only(client: AsyncClient) -> None:
         "/auth/jwt/login", data={"username": reg["email"], "password": reg["password"]}
     )
     headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
-{% else %}
-    headers: dict[str, str] = {}
-{% endif %}
     # Read-only: only GET is mounted, so writes are 405 Method Not Allowed.
     r = await client.post("/audit", json={}, headers=headers)
     assert r.status_code == 405
     r = await client.delete("/audit", headers=headers)
     assert r.status_code == 405
+{% endif %}
+{% endif %}
+{% if not (include_users or include_admin or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks) %}
+
+
+async def test_audit_read_endpoint_is_not_mounted_without_an_identity_capability(
+    client: AsyncClient,
+) -> None:
+    """No identity capability -> no readable audit log, at all.
+
+    Found by the route-coverage gate on its first full-matrix run: the flat GET /audit attached its
+    auth dependency only when users/admin shipped, so an audit-only service published its entire
+    append-only log — actor, action, target, metadata — to anonymous callers. The endpoint is now
+    absent rather than unauthenticated, and this test pins that so the mounting condition cannot
+    silently widen. Writing is unaffected: `record` still appends.
+    """
+    response = await client.get("/audit")
+    assert response.status_code == 404, (
+        f"GET /audit answered {response.status_code} in a service with no identity capability — "
+        "an anonymously-readable audit log is a disclosure of the security record itself"
+    )
 {% endif %}

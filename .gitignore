@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 *.bak
 .claude/settings.local.json
+
+# Per-slice staging scope consumed by .claude/hooks/staged-scope.sh (local working state).
+.claude/slice-scope

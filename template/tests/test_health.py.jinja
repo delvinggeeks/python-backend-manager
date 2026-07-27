@@ -11,10 +11,19 @@ async def test_health(client):
     assert "version" in body
 
 
+{% if include_users or include_tenancy or include_rbac or include_api_keys or include_billing or include_webhooks or include_admin %}
+async def test_agent_requires_authentication(client):
+    # /agent costs money per call, so authentication is checked BEFORE the backend is consulted:
+    # an anonymous caller gets 401, never the 503 that would confirm the endpoint exists and works.
+    resp = await client.post("/agent", json={"prompt": "hello"})
+    assert resp.status_code == 401
+{% else %}
 async def test_agent_requires_backend(client):
-    # With no ANTHROPIC_API_KEY / no framework, the endpoint reports 503 cleanly.
+    # This render ships no credential system, so /agent is unauthenticated (recorded in the
+    # PUBLIC_ROUTES allow-list). With no ANTHROPIC_API_KEY / no framework it reports 503 cleanly.
     resp = await client.post("/agent", json={"prompt": "hello"})
     assert resp.status_code == 503
+{% endif %}
 
 
 async def test_security_headers_present(client):
