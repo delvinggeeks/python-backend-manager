@@ -56,25 +56,30 @@ def upgrade() -> None:
         ") WHERE organization_id IS NULL"
     )
     # --- contract -----------------------------------------------------------------------------
-    op.alter_column("wallet_transactions", "organization_id", nullable=False)
+    # BATCH mode, and not as a style preference: SQLite implements neither
+    # `ALTER COLUMN ... SET NOT NULL` nor adding a foreign key in place, and the unit suites run on
+    # SQLite while production runs on Postgres. Guarding these by dialect instead would leave the
+    # column nullable and unconstrained in exactly the database the tests use, so the tests could
+    # not fail on a NULL the production schema rejects. Batch mode rebuilds the table on SQLite and
+    # emits plain ALTERs on Postgres, so one shape holds on both.
+    with op.batch_alter_table("wallet_transactions") as batch_op:
+        batch_op.alter_column("organization_id", existing_type=_GUID(), nullable=False)
+        batch_op.create_foreign_key(
+            "fk_wallet_transactions_organization_id",
+            "organizations",
+            ["organization_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
     op.create_index(
         "ix_wallet_transactions_organization_id",
         "wallet_transactions",
         ["organization_id"],
     )
-    op.create_foreign_key(
-        "fk_wallet_transactions_organization_id",
-        "wallet_transactions",
-        "organizations",
-        ["organization_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "fk_wallet_transactions_organization_id", "wallet_transactions", type_="foreignkey"
-    )
     op.drop_index("ix_wallet_transactions_organization_id", table_name="wallet_transactions")
-    op.drop_column("wallet_transactions", "organization_id")
+    with op.batch_alter_table("wallet_transactions") as batch_op:
+        batch_op.drop_constraint("fk_wallet_transactions_organization_id", type_="foreignkey")
+        batch_op.drop_column("organization_id")
