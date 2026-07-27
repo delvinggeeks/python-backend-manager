@@ -64,8 +64,8 @@ _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "opt
 # the reason it is not an application endpoint. Adding a hidden route means adding a line here, and
 # that line is the review moment — same contract as PUBLIC_ROUTES.
 # ---------------------------------------------------------------------------------------------
-APPROVED_SCHEMA_EXCLUSIONS: dict[str, str] = {
 {% if include_observability %}
+APPROVED_SCHEMA_EXCLUSIONS: dict[str, str] = {
     "app/observability/health.py::/healthz": (
         "Liveness probe. Consumed by an orchestrator on a network path that segmentation, not "
         "application auth, is responsible for. Returns no tenant data."
@@ -76,8 +76,10 @@ APPROVED_SCHEMA_EXCLUSIONS: dict[str, str] = {
     "app/observability/setup.py::/metrics": (
         "Prometheus scrape endpoint. Aggregate counters only; protected at the network layer."
     ),
-{% endif %}
 }
+{% else %}
+APPROVED_SCHEMA_EXCLUSIONS: dict[str, str] = {}
+{% endif %}
 
 
 def _operations() -> list[tuple[str, dict]]:
