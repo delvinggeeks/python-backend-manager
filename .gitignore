@@ -9,3 +9,12 @@ __pycache__/
 
 # Per-slice staging scope consumed by .claude/hooks/staged-scope.sh (local working state).
 .claude/slice-scope
+
+# Env / secrets. Nobody builds a service in this repo, so a real .env here is unlikely rather than
+# impossible — and the gitleaks CI job scans the PR DIFF, which means it catches a committed secret
+# only after it has been committed. This is the cheaper position: the file never becomes stageable.
+# template/.gitignore already carries the equivalent for generated services; this is the manager
+# repo's own copy, and the two are deliberately separate files rather than one shared rule.
+.env
+.env.*
+

@@ -89,6 +89,12 @@ config that governs them, so the gate is scoped to `scripts/`; two gates disagre
 is worse than one gate. Three of the four real findings were deliberate patterns made explicit
 (`check=False`, a reasoned `noqa`) rather than silenced, and the ruff version is pinned.*
 
+*`GIT-1` exits with its own PR. Verified in both directions rather than by reading the pattern: the
+two probe files are ignored and `git add .env` is refused, AND `template/.env.example.jinja` is still
+tracked — a deeper `.gitignore` takes precedence, so the root's new `.env.*` does not defeat the
+negation ENV-1 added one directory down. That regression was the only real risk in a three-line
+change, so it is the thing that got checked.*
+
 ### GATE-1 · The RLS enumeration fails open when a model's dependency is missing
 
 - **Deliverable:** a partially-failed import cannot silently shrink the set of tables the RLS
@@ -134,22 +140,6 @@ is worse than one gate. Three of the four real findings were deliberate patterns
 - **Blocked-by:** none. **Blocks:** none. **HITL** — the question design is a judgement call.
   **Sized:** yes.
 - *Re-filed: the ENV-1 exit deleted this block along with ENV-1's, which sat immediately above it.*
-
-### GIT-1 · Root `.gitignore` does not ignore `.env`
-
-- **Deliverable:** a real `.env` in this repo cannot be staged by accident.
-- **Evidence:** the root `.gitignore` lists caches, `.venv`, `.claude/settings.local.json` and
-  `.claude/slice-scope` — and no env rule at all. Probe files named `.env`, `.env.local` and
-  `.env.production` were created at the repo root during DEV-1 and `git status` listed all three as
-  untracked-and-stageable. `template/.gitignore:16-18` already does this correctly
-  (`.env`, `.env.*`, `!.env.example`); only the manager repo is missing it.
-- **Severity: low but not zero.** Nobody runs a service here, so a real `.env` is unlikely — but the
-  gitleaks CI gate is a *diff* scanner, so it would catch the secret only after it was committed.
-- **Failing-test-first:** `printf 'X=y\n' > .env && git status --porcelain` lists it. That is the
-  failing state.
-- **File set:** `.gitignore`. Copy the three lines from `template/.gitignore`.
-- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — three lines.
-
 
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
