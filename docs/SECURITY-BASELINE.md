@@ -289,17 +289,17 @@ because the connection still carried app.current_tenant='b2e23a62-…'
 *Findings that become scheduled work move to the ledger ([ROADMAP.md](ROADMAP.md)); this list holds
 only what is open and unscheduled.*
 
-**Open.**
-
-- **`RLS-DEBT` · four tenant tables are exempted as debt, not design.** `usage_events`, `invoices`,
-  `customer_wallets` and `outbox_events` carry `organization_id` with no policy — surfaced by the
-  gate above on its first run, and listed in `RLS_EXEMPT_TABLES` so the omission is a visible
-  decision rather than an invisible absence. Ledger ticket **P4-b** closes them and deletes the
-  entries. `outbox_events` is low-risk (the relay already runs BYPASSRLS); `wallet_transactions`
-  needs the denormalised `organization_id` column P4-b adds, having none today.
+**Open.** None. Every follow-up this document has raised is closed.
 
 **Closed** — kept for the audit trail; each names the position that now holds it.
 
+- ~~**`RLS-DEBT` · four tenant tables exempted as debt, not design.**~~ **CLOSED.**
+  `usage_events`, `invoices`, `customer_wallets` and `outbox_events` carried `organization_id`
+  with no policy, and `wallet_transactions` had no such column at all. All five now carry the
+  standard policy and `FORCE` — `migrations/versions/0013_rls_backfill.py`, with the
+  denormalised column from `0012_wallet_org.py`; the *Money and outbox rows are covered by RLS*
+  row above. `RLS_EXEMPT_TABLES` holds only `memberships`, so the coverage gate now passes with
+  no debt entries rather than with four sanctioned ones. Shipped by ledger ticket P4-b (#81).
 - ~~**`FU-1` · dev/prod parity for the privileged role.**~~ **CLOSED.** `database_url_privileged`
   fell back to `database_url`, so a default local environment ran the "privileged" session as the
   ordinary app role. The local compose stack now provisions a dedicated `BYPASSRLS` role, so the dev
