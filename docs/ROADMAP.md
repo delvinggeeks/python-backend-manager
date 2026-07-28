@@ -40,13 +40,9 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-The active queue, **in priority order: FMT-1 → ENV-2 → RESET-1 → MIG-SPLIT-1.** Ticket order in
+The active queue, **in priority order: ENV-2 → RESET-1 → FMT-2 → MIG-SPLIT-1.** Ticket order in
 this section is the queue; a session pulls the top one. Everything below the tickets is coarse and
 carries `decompose on pull`.
-
-*FMT-1 was moved ahead of ENV-2 deliberately: a hook that silently rewrites regions a session never
-touched corrupts **every diff a reviewer reads**, which outranks sending disclosure mail to the
-wrong address. A defect in the tool that produces changes precedes a defect in one change.*
 
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
@@ -130,38 +126,22 @@ before it was chosen: every model module's only `app.` import is `app.db.models`
 enumeration imports before the loop, so no render this template produces can reach the stricter
 branch. **FMT-1** files what validating it surfaced.*
 
-### FMT-1 · The format hook runs ruff 0.4.10 and rewrites code that CI's 0.16 rejects
-
-- **Deliverable:** the PostToolUse formatter and the gate that judges its output run the same ruff.
-- **Evidence:** `.claude/hooks/ruff-format.sh` runs `uv run ruff format "$file" || ruff format
-  "$file"`; **both arms resolve to ruff 0.4.10** here (measured — the manager repo has no project
-  ruff, so the first arm falls through to the same PATH binary), while every generated project pins
-  `ruff>=0.15` and locks **0.16.0**. Measured during GATE-1: editing `test_rls.py` made the hook
-  reformat `assert set(_EXEMPTION_OWNER) == set(RLS_EXEMPT_TABLES), (…)` — a region ~75 lines from
-  any edit — into 0.4.10's pre-parenthesized-message style, and `tenancy`, `metering` and
-  `admin_full` then all failed `ruff format --check` on it. The commit had to be amended after
-  re-formatting the file with a rendered project's own ruff.
-- **Why it matters:** the hook exists so sessions stop hand-flattening templated Python. As
-  versioned it manufactures the exact "passed locally, CI disagrees" class `leg-check.sh` exists to
-  eliminate — and it does so in regions the session never edited, so the diff a reviewer reads
-  contains changes nobody chose. It is silent: nothing reports that the file was touched.
-- **The pin already exists** — `ci.yml`'s `repo-lint` job carries a Renovate-tracked
-  `RUFF_VERSION=0.16.0`, the same version the generated projects lock. The hook just doesn't use it.
-- **Decision — pre-made, which is what makes this AFK.** The hook consumes the **same pin CI uses**:
-  exactly **one place records the ruff version, and both the hook and CI read it**. That constraint
-  is not the builder's to revisit. The *mechanism* is: `uvx "ruff@${RUFF_VERSION}"` in the hook,
-  reading the pin from its single recorded location, **or** a repo-level dev dependency so
-  `uv run ruff` resolves to something pinned — take whichever is the cleaner single home once you
-  see the files. What is ruled out is the hook resolving whatever ruff is on `PATH`.
-- **Failing-test-first:** edit a line in a file containing a 0.16-formatted `assert x, (…)`; show
-  the hook rewriting the **untouched** assert, then a rendered leg rejecting it. (`test_rls.py` has
-  one such assert at `test_rls_exemptions_are_not_stale`; GATE-1's PR #87 is the worked example.)
-- **File set:** `.claude/hooks/ruff-format.sh`, and wherever the single pin ends up recorded.
-- **Blocked-by:** none. **Blocks:** none. **AFK** — the judgement call is pre-made above.
-  **Sized:** yes.
-- **Watch for:** the fix cannot be verified through an `Edit`, because the hook fires on the
-  verification edit too. Drive it the way GATE-1 did — the hook's own PostToolUse JSON piped to the
-  script, or a `Bash`-side re-format — or the measurement measures the thing it is testing.
+*`FMT-1` exits with its own PR. The defect reproduced exactly as filed — both hook arms resolved
+**0.4.10**, and driving the hook at `test_rls.py` rewrote the assert at
+`test_rls_exemptions_are_not_stale` with no edit anywhere in the file, which the rendered `tenancy`
+leg's own ruff **0.16.0** then rejected. Three things the ticket did not contain. **The pin was
+tracked by nothing:** the `# renovate: datasource=pypi depName=ruff` marker over `RUFF_VERSION=0.16.0`
+matched no manager — the workflow customManager requires a `version: "…"` key and no built-in manager
+parses a shell assignment inside a `run:` block — so "Renovate-tracked" was decorative, verified by
+running the config's own regex over `ci.yml` (4 matches, all `astral-sh/uv`). Moving the pin to
+`.ruff-version` with a customManager is what makes the claim true. **There was a *third* floating
+ruff:** `.pre-commit-config.yaml`'s `--with ruff` fed `scripts/micro-render-check.py`'s bare `ruff`,
+so a gate that format-checks a render ran whatever released last; it reads the pin now, which is what
+"exactly one place records the version" has to mean. **And the gate that actually rejected the file
+floats by design** — a capability leg resolves ruff from a fresh `uv lock` against the template's
+`ruff>=0.15` floor, so the pin can only ever be *behind* it. That is real residual exposure, not a
+detail, and closing it is a trade-off the ticket had not pre-decided; it is filed as **FMT-2** rather
+than improvised here.*
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 
@@ -223,6 +203,40 @@ branch. **FMT-1** files what validating it surfaced.*
 - **File set:** `template/src/app/…db/session.py.jinja`, `template/tests/{% if include_rls %}test_rls.py{% endif %}`,
   `docs/SECURITY-BASELINE.md` (§3 line, §13 preamble bullet + row).
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
+
+### FMT-2 · The recorded ruff pin can silently fall behind the ruff the legs actually run
+
+- **Deliverable:** the version the format hook writes with and the version the capability legs judge
+  with cannot diverge without something saying so.
+- **Evidence:** FMT-1 gave this repo one recorded ruff version (`.ruff-version`, read by the hook,
+  `repo-lint` and `micro-render-check.py`) — but the gate that *rejected* the file in FMT-1's own
+  reproduction was none of those. It was the capability leg, and a leg resolves ruff from a fresh
+  `uv lock` against the template's `ruff>=0.15` **floor**, so it takes whatever is newest at run
+  time. Today both are 0.16.0. On the next formatter-affecting release they are not, and FMT-1's
+  defect returns — one minor apart instead of twelve, and still silent.
+- **Why it is smaller than FMT-1, and why it is still real:** the lag self-announces (a leg goes red)
+  rather than corrupting diffs indefinitely, and the gap is bounded by one release. But the thing
+  that goes red is a *capability leg on an unrelated PR*, which is exactly the misattributed failure
+  FMT-1 existed to stop.
+- **The legs must keep floating — do not "fix" this by pinning them.** A leg floating to the newest
+  ruff is how this repo learns that a new ruff broke the template; that is the signal that caught
+  0.16's markdown formatting. Any solution that pins the leg's ruff destroys the gate to protect the
+  hook.
+- **Design decision required (do not pre-empt):** (a) a CI check asserting `.ruff-version` equals
+  the version a rendered project resolves — earliest signal, but Renovate runs **weekly** with a
+  3-day pypi cooldown, so a stale pin could red *every* PR for close to a week; (b) the same check
+  with a ruff-specific `packageRule` shortening that window; (c) accept the lag and leave the leg's
+  own red as the signal, documenting it on the §13 row. The trade is CI noise against earliness and
+  it was not pre-decided in FMT-1.
+- **Failing-test-first:** set `.ruff-version` to a version *older* than the floor resolves (e.g.
+  `0.15.0`), render a leg, and show the hook and the leg formatting the same file differently with
+  nothing reporting it.
+- **File set:** `.ruff-version` consumers as chosen (`.github/workflows/ci.yml`), possibly
+  `renovate.json`, `docs/SECURITY-BASELINE.md` (§13 row's stated residual).
+- **Blocked-by:** none — FMT-1 shipped the single pin this builds on. **Blocks:** none. **HITL** —
+  the noise/earliness trade is a judgement call. **Sized:** yes.
+- *Placed ahead of MIG-SPLIT-1 for the reason FMT-1 was placed first: a defect in the tool that
+  produces every diff outranks one that no shipped service is exposed to.*
 
 ### MIG-SPLIT-1 · `0012_wallet_org` is one revision doing three deployable steps
 

@@ -22,6 +22,15 @@
     },
     {
       "customType": "regex",
+      "description": "Track `.ruff-version`, the single place this repo records a ruff version — read by ci.yml's repo-lint job, by the PostToolUse format hook (.claude/hooks/ruff-format.sh) and by scripts/micro-render-check.py. It replaces an inline `RUFF_VERSION=0.16.0` in ci.yml that carried a `# renovate:` marker and was matched by NOTHING: the workflow customManager above requires a `version: \"…\"` key, no built-in manager parses a shell assignment inside a `run:` block, and so the pin had been untracked since it was introduced. The file holds exactly one line, so an unanchored version match is unambiguous — Renovate compiles matchStrings without the multiline flag, which makes `^` mean start-of-file rather than start-of-line.",
+      "managerFilePatterns": ["/^\\.ruff-version$/"],
+      "matchStrings": ["(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "ruff",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
       "description": "Track the TEMPLATE BODY's Python deps. template/pyproject.toml.jinja is a jinja file, so no built-in manager (pep621/pip_requirements) ever parses it — every lower-bound pin in the template was invisible to Renovate, which is why the dashboard's 'Detected Dependencies' listed no pypi manager at all. Matches a PEP 508 requirement string: name, optional extras (non-capturing, so `uvicorn[standard]` yields depName `uvicorn`), then the `>=` floor. depName allows dots/hyphens (opentelemetry-instrumentation-fastapi, python-multipart); currentValue is anything up to the closing quote or a comma, so PEP 440 pre-release floors (`>=0.50b0`) and bare majors (`>=7`) are captured too. Jinja-gated lines (`{% if include_admin %}, \"itsdangerous>=2.0\"`) match like any other because each entry carries its own opening quote.",
       "managerFilePatterns": ["/^template/pyproject\\.toml\\.jinja$/"],
       "matchStrings": [

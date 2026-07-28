@@ -244,6 +244,15 @@ jobs:
   # The version is PINNED. A floating ruff turned three capability legs red once, when 0.16 began
   # formatting Python blocks inside markdown; a lint gate that changes verdict without a commit is
   # not a gate. Renovate proposes the bump as a reviewable PR.
+  #
+  # The pin lives in `.ruff-version`, and that file is the ONLY place this repo records a ruff
+  # version. It is read here, by the PostToolUse format hook (.claude/hooks/ruff-format.sh) and by
+  # scripts/micro-render-check.py. Two of those three used to resolve their own ruff — measured, the
+  # hook ran 0.4.10 and rewrote code these legs then rejected (FMT-1) — and a formatter disagreeing
+  # with the gate that judges its output is the same drift `scripts/leg-check.sh` exists to remove.
+  # Keeping the version in a file rather than inline is also what makes it Renovate-trackable: the
+  # inline `RUFF_VERSION=` assignment this replaced matched no manager, built-in or custom, so the
+  # `# renovate:` marker above it had been decorative since the day it was written.
   repo-lint:
     name: "repo lint"
     runs-on: ubuntu-latest
@@ -257,8 +266,7 @@ jobs:
       - name: Lint and format-check this repository's own Python
         run: |
           set -euo pipefail
-          # renovate: datasource=pypi depName=ruff
-          RUFF_VERSION=0.16.0
+          RUFF_VERSION=$(tr -d '[:space:]' <.ruff-version)
           uvx "ruff@${RUFF_VERSION}" check scripts/
           uvx "ruff@${RUFF_VERSION}" format --check scripts/
 
