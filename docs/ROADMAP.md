@@ -141,6 +141,30 @@ change, so it is the thing that got checked.*
   **Sized:** yes.
 - *Re-filed: the ENV-1 exit deleted this block along with ENV-1's, which sat immediately above it.*
 
+### HANDOFF-1 · The session boundary is remembered rather than emitted
+
+- **Deliverable:** `/handoff` emits a ready-to-paste NEXT SESSION block, assembled only from the
+  selected ticket's own fields, and refuses to emit one at all for an unfinished ticket.
+- **Evidence:** AGENTS.md mandates one ticket per session, fresh context, and an ending that writes
+  breadcrumbs and updates the ledger. All three are prose, so all three depend on the session
+  remembering them at exactly the point where context depth makes remembering least reliable — the
+  end. The next session's opening prompt is likewise hand-assembled each time, which is where an
+  invented file-set or a forgotten JIT read enters.
+- **Why it matters:** the failure is silent in both directions. A session that ends without updating
+  the ledger leaves the next one selecting against a stale queue, and a hand-written opening prompt
+  that names the wrong File set binds the staging guard to the wrong slice — the guard still passes,
+  against the wrong scope.
+- **Failing-test-first:** invoke `/handoff` with the active ticket still in NEXT UP and no exit note
+  written, and require a refusal naming both gaps; today there is nothing to invoke.
+- **Sketch:** three ordered steps — VERIFY end-of-ticket state from `git`/`grep` output rather than
+  from judgement; SELECT the first NEXT UP ticket whose blocked-by is satisfied; EMIT the block with
+  every field quoted from the ticket, and say `MISSING` where the ticket has no such field. JIT reads
+  are resolved against AGENTS.md's own Reading-contract table, never a copy of it.
+- **File set:** `.claude/commands/handoff.md`, `AGENTS.md`, `docs/ROADMAP.md` — and
+  `.doc-budgets.toml`, because AGENTS.md is at its ceiling (see the exit note).
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes — filing and building are one
+  deliverable; the command is a prompt file, not a code path.
+
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
 ### P9 · Notifications (multi-channel)  🟠
