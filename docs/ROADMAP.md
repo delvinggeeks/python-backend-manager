@@ -95,6 +95,20 @@ tracked — a deeper `.gitignore` takes precedence, so the root's new `.env.*` d
 negation ENV-1 added one directory down. That regression was the only real risk in a three-line
 change, so it is the thing that got checked.*
 
+*`HANDOFF-1` was filed and built in one session, and exits with its own PR — filing and building were
+its single deliverable. Three findings. **AGENTS.md had no headroom**: it was at 90/90, not the 88/90
+the ticket assumed, the slice-scope note having taken the rest; the budget was raised to 92 rather
+than room manufactured by cutting prose that is still true, since the cut would have been the
+unreviewed change. **The verification order was inverted on purpose** — the refusal was demonstrated
+against this session's own unfinished state rather than a simulated one, and the emit was
+demonstrated only after this note existed, which is the first moment `/handoff` can legitimately
+pass its own gate. **The JIT reads are resolved by reading AGENTS.md's Reading-contract table**, not
+by a copy inside the command: a second copy of that table would drift from the one sessions follow,
+and a handoff naming the wrong reads is exactly the defect the command exists to prevent. One thing
+it deliberately does not do: a dirty worktree is printed as a loud warning, not a refusal, because a
+ticket may legitimately end with its PR open — but it is what a window-close destroys, so it is
+never silent.*
+
 ### GATE-1 · The RLS enumeration fails open when a model's dependency is missing
 
 - **Deliverable:** a partially-failed import cannot silently shrink the set of tables the RLS

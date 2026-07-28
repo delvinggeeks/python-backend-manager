@@ -80,6 +80,8 @@ happen: quality degrades with context depth, and the degradation is invisible fr
 - **A session's first act is declaring `.claude/slice-scope`** from its ticket's own **File set**,
   so the staging guard is bound to the ticket rather than to whatever the session drifts into.
 - **Every session ends** by writing breadcrumbs and updating its ticket's status in the ledger.
+- **Ticket done → run `/handoff`**; its NEXT SESSION block is pasted into a NEW window — the open
+  window dies with the ticket.
 - **The rule is never applied retroactively.** It bounds context *before* work, so re-splitting
   finished, verified work buys review granularity only — which commits inside one PR already give.
 

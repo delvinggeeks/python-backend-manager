@@ -9,5 +9,9 @@
 # They are read on demand by the sessions that need them, so their length costs nothing by default,
 # and a ledger must be free to hold the work that actually exists.
 [budgets]
-"AGENTS.md" = 90
+# Raised 90 -> 92 by HANDOFF-1. The session protocol gained the `/handoff` bookend; AGENTS.md was
+# already at 90/90, the slice-scope note having taken the last of the headroom. Raising is the
+# sanctioned path (see above) and is preferred here to manufacturing room by cutting prose that is
+# still true — the cut would be the unreviewed change, not the raise.
+"AGENTS.md" = 92
 "docs/PLATFORM-INTEGRATION.md" = 120
