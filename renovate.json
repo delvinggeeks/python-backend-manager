@@ -63,6 +63,15 @@
       "matchUpdateTypes": ["major"],
       "automerge": false,
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "BOUND THE RUFF-PIN LAG (ledger ticket FMT-2). `.ruff-version` pins the ruff that EDITS code (the PostToolUse format hook) and that two gates run; a capability leg resolves ruff from a fresh `uv lock` against the template's `ruff>=0.15` floor, so the leg always takes whatever is newest at run time and the pin can only ever be BEHIND it. That residual is accepted, not gated: a pin-equals-resolved CI check would red every PR for close to a week on a stale pin, and noise that trains people to ignore red costs more than a bounded lag. This rule is what bounds it — the pin chases the floor in about a day instead of about a week. Three settings, each load-bearing. `minimumReleaseAge: 1 day` shortens the generic 3-day pypi cooldown above (rules merge in order and this one is LAST, so it wins; PREPENDING it would be a silent no-op, with the generic rule overriding it straight back to 3 days). `schedule` is required, not decoration: `minimumReleaseAge` bounds when a release becomes ELIGIBLE, not when Renovate RUNS, and the top-level `schedule:weekly` expands through `schedule:earlyMondays` to `* 0-3 * * 1` — a Monday-04:00-to-Monday-00:00 window — so a 24h cooldown alone still waits for the next Monday and the lag stays ~7 days. `matchUpdateTypes` leaves the major path untouched: a ruff 1.0 still falls through to the major rule above, on dependencyDashboardApproval. Verified against Renovate's own pep440 versioning rather than assumed — 0.16->0.17 and 0.15.22->0.16.0 both classify as `minor`, 0.16->1.0.0 as `major`. Scoped by FILE, not by depName: `template/pyproject.toml.jinja` carries a `ruff>=0.15` floor that the template customManager also reports as depName `ruff`, and that floor SHIPS INTO every generated service, so it keeps the full 3-day supply-chain cooldown. This file does not ship anywhere — it is this repo's own dev tooling, gated by CI on the bump PR itself.",
+      "matchFileNames": [".ruff-version"],
+      "matchDepNames": ["ruff"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "minimumReleaseAge": "1 day",
+      "schedule": ["at any time"],
+      "automerge": true
     }
   ]
 }
