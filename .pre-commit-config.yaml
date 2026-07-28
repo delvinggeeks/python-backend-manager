@@ -11,7 +11,10 @@ repos:
       # generate-matrix in CI remains the complete gate for this class — see scripts/leg-check.sh.
       - id: micro-render-check
         name: micro-render (gated blocks off) must stay format-clean
-        entry: uv run --no-project --with jinja2 --with ruff python scripts/micro-render-check.py
+        # No `--with ruff`: an unpinned extra resolved whatever ruff released last, so this gate
+        # could disagree with both CI and the format hook. The script resolves the one recorded
+        # version from `.ruff-version` itself.
+        entry: uv run --no-project --with jinja2 python scripts/micro-render-check.py
         language: system
         files: \.py\.jinja$
         pass_filenames: true

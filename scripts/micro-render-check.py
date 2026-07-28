@@ -44,6 +44,24 @@ ENV = Environment(
 )
 
 
+def pinned_ruff() -> list[str]:
+    """Return the argv prefix running the ONE ruff version this repo records.
+
+    This gate format-checks a render, and the PostToolUse hook that produced that formatting must
+    therefore be running the same ruff — see `.ruff-version`, the single home both read. Resolving
+    a bare `ruff` from PATH is what let the hook run 0.4.10 against a 0.16 gate (FMT-1).
+    """
+    pin = Path(__file__).resolve().parent.parent / ".ruff-version"
+    try:
+        version = pin.read_text().strip()
+    except OSError:
+        version = ""
+    if not version:
+        print(f"micro-render-check: no ruff version recorded in {pin}", file=sys.stderr)
+        raise SystemExit(1)
+    return ["uvx", f"ruff@{version}"]
+
+
 def render_all_off(source: str) -> str | None:
     """Render with every variable undefined — falsy, so all gated blocks are absent."""
     try:
@@ -64,6 +82,7 @@ def main(paths: list[str]) -> int:
     if not targets:
         return 0
 
+    ruff = pinned_ruff()
     failures: list[str] = []
     for path in targets:
         rendered = render_all_off(path.read_text())
@@ -77,14 +96,14 @@ def main(paths: list[str]) -> int:
             # finding — `ruff format` has no opinion on it. A hook running only the formatter
             # silently misses the very case that no amount of care can prevent.
             fmt = subprocess.run(
-                ["ruff", "format", "--check", "--line-length", "100", str(probe)],
+                [*ruff, "format", "--check", "--line-length", "100", str(probe)],
                 capture_output=True,
                 text=True,
                 check=False,  # the returncode IS the result here; a raise would lose the detail
             )
             lint = subprocess.run(
                 [
-                    "ruff",
+                    *ruff,
                     "check",
                     "--select",
                     "I,E501,W291,W293",
