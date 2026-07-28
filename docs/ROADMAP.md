@@ -40,20 +40,29 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-The active queue, **in priority order: ENV-2 → RESET-1 → MIG-SPLIT-1 → RENOVATE-1.** Ticket order in
-this section is the queue; a session pulls the top one. Everything below the tickets is coarse and
-carries `decompose on pull`.
+The active queue, **in priority order: IAC-0 → ENV-2 → RESET-1 → MIG-SPLIT-1 → RENOVATE-1 → IAC-1 →
+IAC-2 → IAC-3.** Ticket order in this section is the queue; a session pulls the top one. Everything
+below the tickets is coarse and carries `decompose on pull`.
 
-*ENV-2 leads because it is the only open ticket that is a defect in **shipped** output rather than in
-this repo's own tooling: every service this template has generated tells its reporters to send
-vulnerability disclosures to the template author. A live misrouting of security reports outranks
-prevention work, and RENOVATE-1 — the newest ticket, filed by FMT-2 — is prevention.*
+*IAC-0 leads because it is the interface three later tickets share, and interfaces land first
+(ticket-format rule above). It is also the cheapest of the eight and unblocked by everything.*
 
-*Two flags a session should not have to open four tickets to find. **The head of the queue is the
-only **HITL** one:** ENV-2 needs a human answer on what a generated service's disclosure address
-should default to, so it stops rather than picking one. The other three are **AFK** — RESET-1 and
-MIG-SPLIT-1 as filed, and RENOVATE-1 since its scope trade was pre-made (ship the validator, do not
-build the rule-matching assertion, state the ceiling instead).*
+*ENV-2 keeps second place for the reason it used to lead: it is the only open ticket that is a defect
+in **shipped** output rather than in this repo's own tooling — every service this template has
+generated tells its reporters to send vulnerability disclosures to the template author. A live
+misrouting of security reports outranks prevention work.*
+
+*The IAC-n chain is deliberately **not** contiguous in the queue. IAC-1 is blocked on **D2** (hosting
+and residency, [DECISIONS-NEEDED.md](DECISIONS-NEEDED.md)) and IAC-3 on **MIG-SPLIT-1**, so the
+tickets between them are what a session pulls while those clear — not filler, but the reason
+MIG-SPLIT-1 sits where it does.*
+
+*Two flags a session should not have to open eight tickets to find. **The HITL ones are ENV-2 and
+IAC-3**: ENV-2 needs a human answer on what a generated service's disclosure address should default
+to, and IAC-3 needs one on what "gated apply" means for a production box. The other six are **AFK** —
+RESET-1 and MIG-SPLIT-1 as filed; RENOVATE-1, IAC-0, IAC-1 and IAC-2 because their trades were
+pre-made. **AFK is not the same as unblocked:** IAC-1 is AFK *and* blocked-by D2, which is a
+precondition rather than a mid-session judgement call.*
 
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
@@ -179,6 +188,39 @@ generated service**, so it keeps the full 3-day supply-chain cooldown; only this
 accelerated. Landed as **`chore:`** rather than FMT-1's `fix:` deliberately: nothing under `template/`
 changed, so a version bump would tell every downstream service to `copier update` for a byte-identical
 render. **RENOVATE-1** files what building it surfaced.*
+
+### IAC-0 · A generated service has no deployable-artifact contract
+
+- **Deliverable:** the three things the OpenTofu module and the deploy pipeline must agree on — a
+  published image digest, a readiness signal that can actually fail, and a compose overlay that
+  *runs* an image instead of building one — exist and are verifiable on a laptop.
+- **Evidence, measured:** `template/compose.yaml.jinja` is a **dev-only** stack. `api` uses
+  `build: .`, so there is no path to run a published artifact at all. `db` publishes `5432:5432` and
+  `redis` `6379:6379`, which on a public-IP box bind `0.0.0.0` — §2's *"database, cache and internal
+  services are never internet-routable"* (`environment`) failing with no gate that can see it.
+  Postgres user/password/db are all the project slug. `api` has no healthcheck and `Dockerfile.jinja`
+  has no `HEALTHCHECK`. The digest exists but is unreachable: `release-image.yml` produces
+  `steps.build.outputs.digest` and already feeds it to Trivy, `cosign sign` and the SLSA attestation,
+  but it is **step-scoped with no job `outputs:` block**, so no other workflow can read it. Root
+  `ci.yml`'s `supply-chain` job builds with `--load` and never pushes, so it is not a digest source.
+- **The readiness finding, which is the load-bearing one.** `/health` is always mounted and is
+  **liveness-only** — it returns environment + version and probes nothing, so it answers **200 with
+  the database down**. The real dependency-probing `/readyz` (503 when degraded) lives in
+  `observability/health.py.jinja` and therefore **does not exist** in a service without that
+  capability. A health-gated rollout built on `/health` would gate on a signal that cannot fail.
+- **Sketch:** `release-image.yml` gains a job `outputs:` block exposing the digest. The readiness
+  probe becomes available **ungated**, `/health` staying liveness. A `compose.prod.yaml.jinja`
+  overlay consumes `image: …@sha256:…` from a variable and publishes **only** the ingress port.
+  `api` gains a compose healthcheck; `Dockerfile.jinja` gains `HEALTHCHECK`. Byte-identity: the dev
+  `compose.yaml` is unchanged for anyone not opting in.
+- **Failing-test-first — what "no deployment exists" looks like as an observed failure:** render a
+  service and run `docker compose config` — `build: .`, no `image:` key, so no published artifact is
+  runnable. Then stop the `db` container and `curl /health` → **200** while `/readyz` → **404**
+  unless observability is on. Both gaps observed before either is closed.
+- **File set:** `template/.github/workflows/release-image.yml`, `template/compose.yaml.jinja`, new
+  `template/compose.prod.yaml.jinja`, `template/Dockerfile.jinja`, the readiness module's path gate,
+  `template/src/app/api/routes/health.py`, `docs/ROADMAP.md`.
+- **Blocked-by:** none. **Blocks:** IAC-1, IAC-2, IAC-3. **AFK.** **Sized:** yes.
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 
@@ -312,6 +354,98 @@ render. **RENOVATE-1** files what building it surfaced.*
 - **Blocked-by:** none. **Blocks:** none. **AFK** — the scope trade is pre-made above. **Sized:** yes.
 - *Also a standing **GC Friday** candidate: three corrections in one lineage is exactly the trigger
   for converting a repeated mistake into a gate rather than a reminder.*
+
+### IAC-1 · No OpenTofu exists, so the service layer cannot be planned
+
+- **Deliverable:** a generated service ships an OpenTofu **service-layer** module that plans cleanly
+  against a single-VPS Stage-1 topology.
+- **Evidence:** `find template -name '*.tf*'` returns nothing. §13 carries **zero rows at Layer 1 and
+  Layer 2** — §1's six guardrails are every one of them `environment` or `environment (IaC)`, and
+  §2's segmentation row likewise, so none of them can be assessed by anything that exists today.
+  That is the justification for this phase, and it is why the slice is Stage 1: it is the topology
+  every generated service actually starts on.
+- **Decision — pre-made, which is what makes this AFK.** Four trades, settled, not the builder's to
+  revisit; the *shape* of the module is.
+  - **Postgres is CONTAINERISED at Stage 1.** The BYPASSRLS role is created by
+    `scripts/init-db/01-privileged-role.sql` mounted at `/docker-entrypoint-initdb.d`, which runs
+    **only on first boot of an empty volume** — a managed Postgres has no such hook, so P4's
+    dual-role RLS would silently lose its privileged role. `pgvector` is also required. **Managed
+    Postgres becomes a Stage-2 ticket with its own role-provisioning path.**
+  - **Backend state: a manually bootstrapped object-store bucket, referenced as data.** Documented
+    as **the** bootstrap step in the module header, with the service/platform split stated
+    explicitly: this module owns **service-layer state only**. Local state is rejected.
+  - **Ingress: Traefik**, per [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) §2's Stage-1 row
+    (*nginx/Traefik + Let's Encrypt*). A Caddy variant was considered and **withdrawn** — nothing
+    measured argued against the filed ADR, so it stands unamended.
+  - **Secrets: SOPS/age encrypted files**, as the Stage-1 **interim**, documented as interim with
+    **P14 (`SecretsPort`) as the upgrade path**. IAC-1 does **not** block on P14. Secrets are
+    referenced, never embedded in tfvars or state.
+- **Sketch:** gated on a new copier toggle, byte-identity preserved when off. Provisions the box,
+  lays down IAC-0's prod compose overlay + Traefik + TLS, and wires containerised Postgres.
+  **Region and residency are variables, never branches** — P42's outer line, unchanged.
+- **Failing-test-first:** `find template -name '*.tf*'` returns nothing — there is no plan to run.
+  Then the §2 demonstration that motivates the module: render today's compose onto a public-IP box
+  and show `5432` and `6379` answering from off-host.
+- **File set:** new gated `template/infra/**`, `copier.yml`, `.github/workflows/ci.yml` (new
+  capability leg), `docs/ROADMAP.md`.
+- **Blocked-by:** **IAC-0**, and **D2** — the VPS provider and region are a founder call, still open
+  in [DECISIONS-NEEDED.md](DECISIONS-NEEDED.md). This is not pedantry: [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md)
+  §4 records that **Hetzner has no India DC and DigitalOcean's nearest is Singapore**, so the two
+  cheapest single-VPS providers are both *cross-border* under DPDP. **Blocks:** IAC-2, IAC-3.
+  **AFK** — the four design trades are pre-made above; D2 is a precondition, not a mid-session
+  judgement. **Sized:** yes.
+
+### IAC-2 · Infra changes merge with no plan and no policy gate
+
+- **Deliverable:** an infra PR shows its plan as an artifact and fails on the `environment`-position
+  guardrails before anything can be applied.
+- **Evidence:** `grep -rn "tofu\|terraform" template/.github/workflows/` returns nothing.
+- **The guardrail list this gate fails on** — §1's six rows (hardened host baseline as code; drift
+  detection; immutable patch waves; containers non-root + read-only root filesystem + no excess
+  capabilities; sandboxed execution with an egress allow-list; **workload credentials short-lived and
+  workload-scoped**) plus **§2's segmentation row** (datastores never internet-routable). Those are
+  the rows §13 cannot assess today, so closing them is what earns the §13 entry.
+- **Decision — pre-made.** **CI authenticates by OIDC federation with short-lived scoped
+  credentials.** Standing cloud keys in repository secrets are ruled out by §1's own
+  *workload-credentials* row — a gate that enforces that list while itself holding a long-lived key
+  would fail its own policy.
+- **Tool selection is a measurement that cannot be made before IAC-1 lands, and is filed as one
+  rather than guessed.** Run Checkov, Trivy (`trivy config`) and OPA/Conftest against IAC-1's actual
+  output and pick on findings quality and false-positive rate. One measured input to start from:
+  **Trivy is already present and SHA-pinned** in both root `ci.yml` and
+  `template/.github/workflows/release-image.yml`, and it absorbed tfsec's IaC scanning — so it has
+  the lowest marginal cost. Confirm that; do not assume it.
+- **Failing-test-first:** open an infra-touching PR and observe it merge with no plan artifact and no
+  policy scan — then, once the gate exists, land a plan that would publish `5432` and watch it fail.
+- **File set:** `template/.github/workflows/` (new deploy workflow — plan + policy jobs only),
+  `.github/workflows/ci.yml`, `docs/SECURITY-BASELINE.md` §13, `docs/ROADMAP.md`.
+- **Blocked-by:** **IAC-1**. **Blocks:** IAC-3. **AFK.** **Sized:** yes.
+
+### IAC-3 · Nothing applies, migrates, or verifies the deploy
+
+- **Deliverable:** a merged change reaches a running VPS behind a gated apply, with migrations as a
+  separate gated job, and success asserted by an external signal.
+- **Sketch:** environment-gated apply consuming **IAC-0's immutable digest — never a rebuild**, with
+  `cosign verify` run against it before it is allowed to run (free: the signature already exists).
+  Migrations as a **separate gated job running the expand phase only**. Rollout gated on IAC-0's
+  ungated readiness endpoint. **Success asserted by an external probe against the deployed service,
+  never by the apply's own exit code.**
+- **Why MIG-SPLIT-1 blocks this, concretely:** `0012_wallet_org` performs expand, backfill and
+  contract inside one `upgrade()`, so "run the expand phase only" is **not expressible** until that
+  revision is split. The dependency is structural, not stylistic.
+- **Design decision required (do not pre-empt):** what **"gated apply"** means for a production box —
+  a GitHub Environment with required reviewers, main-branch-only, tag-triggered, or auto-apply with
+  fast rollback. Each trades deploy latency against blast radius, and the answer also decides whether
+  the migration job's gate is the same gate or a second one. Decide before building; it is the only
+  open trade left in the IAC chain and can be pre-made like the other four.
+- **Failing-test-first:** demonstrate the failure the external check exists to catch — deploy a
+  container that starts and then answers `/readyz` with **503**, and show that a pipeline trusting
+  the apply's exit code reports **success**.
+- **File set:** the deploy workflow (apply / migrate / verify jobs), `template/Justfile.jinja`,
+  `docs/SECURITY-BASELINE.md` §13, `docs/ROADMAP.md`.
+- **Blocked-by:** **IAC-2**, and **MIG-SPLIT-1** for expand-only migrations. **Blocks:** none.
+  **HITL** — the apply-gate trade above. **Sized:** yes — split from IAC-2 deliberately, so every
+  *mutating* capability lands behind a read-only gate that is already trusted.
 
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
@@ -792,10 +926,28 @@ The remaining genuine platform subsystems found by an adversarial audit ([COMPLE
 - **Blocked-by:** none. **Blocks:** none. *decompose on pull*
 
 ### P42 · Generated IaC  🟠  (was W7)
-- **Outcome:** Terraform generated for [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) **Stage 2** (default);
-  Stage 3 and a sovereign/air-gapped variant behind flags. Stage 1 stays compose-level.
+- **Outcome:** **OpenTofu** generated for [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) **Stage 1** — the
+  thin first slice, decomposed above as **IAC-0 → IAC-1 → IAC-2 → IAC-3** — and **Stage 2**
+  (default); Stage 3 and a sovereign/air-gapped variant behind flags.
 - **Outer lines:** region and residency are variables, never branches.
-- **Blocked-by:** none. **Blocks:** P45's air-gap install path. *decompose on pull*
+- **AMENDED — the outer line used to read *"Stage 1 stays compose-level"*, which excluded the slice
+  now filed as IAC-0…IAC-3. Three measured reasons, recorded so the amendment is reviewable rather
+  than assumed.** (a) §13 carries **zero rows at Layer 1 and Layer 2**; §1's six guardrails are all
+  `environment`/`environment (IaC)` and §2's segmentation row likewise, so *no* infrastructure
+  guardrail in this document can be assessed by anything that exists — and Stage 1 is the topology
+  every generated service actually starts on, so the guardrails get exercised on day one rather than
+  at ~1k MAU. (b) *"Stays compose-level"* was read as *"needs no IaC"*, and measured that is unsafe:
+  `template/compose.yaml.jinja` is a dev-only stack that publishes `5432` and `6379`, so on a
+  public-IP box it violates §2's segmentation row — the exclusion left a real failure with no owner.
+  (c) Interface-first at phase level — a thin Stage-1 slice fixes the module, state and pipeline
+  conventions that Stage 2 would otherwise invent under more pressure. **Tool name corrected
+  Terraform → OpenTofu**, per [INFRA-TOPOLOGY.md](INFRA-TOPOLOGY.md) §6, which leads with OpenTofu.
+  *Deliberately unamended:* [PLATFORM-INTEGRATION.md](PLATFORM-INTEGRATION.md) §6 still names
+  Stage-2 IaC in the `platform`-mode definition of done — Stage 1 does not contradict it, so there
+  is nothing to change there.
+- **Blocked-by:** none. **Blocks:** P45's air-gap install path. Stage 2, Stage 3, the sovereign
+  variant, drift detection, the full policy suite and multi-environment promotion all stay coarse —
+  *decompose on pull*
 
 ### P43 · Control-plane API  🟠  (was W10)
 - **Outcome:** a distinct **versioned management surface**, separate from the product API, under the
