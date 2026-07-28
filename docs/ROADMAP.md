@@ -109,24 +109,45 @@ it deliberately does not do: a dirty worktree is printed as a loud warning, not 
 ticket may legitimately end with its PR open — but it is what a window-close destroys, so it is
 never silent.*
 
-### GATE-1 · The RLS enumeration fails open when a model's dependency is missing
+*`GATE-1` exits with its own PR, and its own evidence was off in a way worth recording. **The
+observed symptom was wrong, and the real defect is worse than filed:** a users-less metering sync
+returns the **empty set**, not `{items}` — `items` carries no `organization_id` in any render — so
+the total-wipe case was always caught by `assert tenant_tables`. The partial case the ticket
+predicted but had not measured was reproduced by making one model module's dependency genuinely
+missing: the enumeration returned `{memberships}`, **1 of 5** tenant tables, and the gate **passed**,
+leaving `usage_events`, `invoices`, `customer_wallets` and `wallet_transactions` — the four money
+tables §13 has a row for — unverified and reported green. **The shipped rule is tighter than the
+sketch.** The sketch would skip any `ImportError` naming a module inside `app.`; shipped, the skip
+requires the missing module to be the target itself or a package on its path, so a *different* `app.`
+module going missing raises rather than shrinking the scope one level in. That was verified safe
+before it was chosen: every model module's only `app.` import is `app.db.models`, which the
+enumeration imports before the loop, so no render this template produces can reach the stricter
+branch. **FMT-1** files what validating it surfaced.*
 
-- **Deliverable:** a partially-failed import cannot silently shrink the set of tables the RLS
-  coverage gate checks.
-- **Evidence:** `_tenant_tables_from_metadata()` in `test_rls.py` imports each model module under
-  `contextlib.suppress(ImportError)`, so an *absent capability* and a *missing dependency* are
-  indistinguishable. Observed during P4-b: syncing without `--extra users` made every model module
-  raise `ModuleNotFoundError: fastapi_users` — all suppressed — and the enumeration returned just
-  `{items}`. The existing `assert tenant_tables` caught that only because the set was **totally**
-  empty. Had one module imported and another failed, the gate would have passed while checking
-  fewer tables than exist, reporting green for coverage it never verified.
-- **Why it matters:** this is the gate that proves tenant isolation. Its failure mode should be a
-  loud error, never a smaller silent scope — a shrinking denominator is invisible in a pass.
-- **Failing-test-first:** sync a metering render without `--extra users` and observe the enumeration
-  return `{items}` while every model module fails to import.
-- **Sketch:** distinguish the two cases — an ImportError naming a module *inside* `app.` is an
-  absent capability and is fine to skip; anything else is a broken environment and should raise.
-- **File set:** `template/tests/{% if include_rls %}test_rls.py{% endif %}`.
+### FMT-1 · The format hook runs ruff 0.4.10 and rewrites code that CI's 0.16 rejects
+
+- **Deliverable:** the PostToolUse formatter and the gate that judges its output run the same ruff.
+- **Evidence:** `.claude/hooks/ruff-format.sh` runs `uv run ruff format "$file" || ruff format
+  "$file"`; **both arms resolve to ruff 0.4.10** here (measured — the manager repo has no project
+  ruff, so the first arm falls through to the same PATH binary), while every generated project pins
+  `ruff>=0.15` and locks **0.16.0**. Measured during GATE-1: editing `test_rls.py` made the hook
+  reformat `assert set(_EXEMPTION_OWNER) == set(RLS_EXEMPT_TABLES), (…)` — a region ~75 lines from
+  any edit — into 0.4.10's pre-parenthesized-message style, and `tenancy`, `metering` and
+  `admin_full` then all failed `ruff format --check` on it. The commit had to be amended after
+  re-formatting the file with a rendered project's own ruff.
+- **Why it matters:** the hook exists so sessions stop hand-flattening templated Python. As
+  versioned it manufactures the exact "passed locally, CI disagrees" class `leg-check.sh` exists to
+  eliminate — and it does so in regions the session never edited, so the diff a reviewer reads
+  contains changes nobody chose. It is silent: nothing reports that the file was touched.
+- **The pin already exists** — `ci.yml`'s `repo-lint` job carries a Renovate-tracked
+  `RUFF_VERSION=0.16.0`, the same version the generated projects lock. The hook just doesn't use it.
+- **Failing-test-first:** edit any line of a file containing a 0.16-formatted `assert x, (…)`;
+  observe the hook rewrite the untouched assert, then a rendered leg reject it.
+- **Sketch (do not pre-empt):** `uvx "ruff@${RUFF_VERSION}" format` in the hook versus a repo-level
+  dev dependency so `uv run ruff` resolves to something pinned. Either way the version must have
+  **one** home, or this recurs at the next ruff minor. GC-Friday material: the correction is a
+  version pin, never a reminder to check the hook's output.
+- **File set:** `.claude/hooks/ruff-format.sh`, and wherever the single pin ends up recorded.
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
