@@ -40,14 +40,14 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-The active queue, **in priority order: FMT-2 → ENV-2 → RESET-1 → MIG-SPLIT-1.** Ticket order in
+The active queue, **in priority order: ENV-2 → RESET-1 → MIG-SPLIT-1 → RENOVATE-1.** Ticket order in
 this section is the queue; a session pulls the top one. Everything below the tickets is coarse and
 carries `decompose on pull`.
 
-*FMT-2 leads for the reason FMT-1 did, one layer down: FMT-1's headline finding was a `# renovate:`
-marker that matched nothing — **a config with no gate behind it is prose**, the same doctrine §0
-applies to controls, applied to the automation that maintains them. FMT-2 is the other half of that
-finding, and it is small.*
+*ENV-2 leads because it is the only open ticket that is a defect in **shipped** output rather than in
+this repo's own tooling: every service this template has generated tells its reporters to send
+vulnerability disclosures to the template author. A live misrouting of security reports outranks
+prevention work, and RENOVATE-1 — the newest ticket, filed by FMT-2 — is prevention.*
 
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
@@ -148,50 +148,31 @@ floats by design** — a capability leg resolves ruff from a fresh `uv lock` aga
 detail, and closing it is a trade-off the ticket had not pre-decided; it is filed as **FMT-2** rather
 than improvised here.*
 
-### FMT-2 · Bound the ruff-pin lag with a cooldown, instead of gating on it
-
-- **Deliverable:** `.ruff-version` chases the floating floor within about a day, and the residual lag
-  is *accepted on the record* rather than policed by a gate.
-- **Evidence:** FMT-1 gave this repo one recorded ruff version (`.ruff-version`, read by the hook,
-  `repo-lint` and `micro-render-check.py`) — but the gate that *rejected* the file in FMT-1's own
-  reproduction was none of those. It was the capability leg, and a leg resolves ruff from a fresh
-  `uv lock` against the template's `ruff>=0.15` **floor**, so it takes whatever is newest at run
-  time. Today both are 0.16.0. On the next formatter-affecting release they are not, and FMT-1's
-  defect returns — one minor apart instead of twelve.
-- **The legs must keep floating — do not "fix" this by pinning them.** A leg floating to the newest
-  ruff is how this repo learns that a new ruff broke the template; that is the signal that caught
-  0.16's markdown formatting. Any solution that pins the leg's ruff destroys the gate to protect the
-  hook.
-- **Decision — pre-made, which is what makes this AFK.** **Accept the lag, and shorten it.** No
-  pin-equals-resolved CI check: on a stale pin it would red *every* PR for close to a week (weekly
-  Renovate schedule × 3-day pypi cooldown), and **noise that trains people to ignore red costs more
-  than a bounded lag that announces itself**. The §13 row already states the residual, so the honest
-  record exists. What lands instead is a **ruff-specific `packageRule`** — short cooldown (~24h),
-  automerge on **patch/minor only** — so the pin chases the floor within a day. That constraint is
-  not the builder's to revisit; the *shape* of the rule is.
-- **Verify the rule MATCHES; do not assume it does.** This is the ticket that found a `# renovate:`
-  marker matching nothing, so the same standard applies to its own fix: extract the dep from
-  `.ruff-version` with the customManager's own regex, then confirm the new rule selects
-  `{depName: ruff, datasource: pypi}` and wins. Dry-run already done, with two results worth having
-  before you start:
-  - **Append it — prepending is a silent no-op.** Rules merge in order, later wins. Simulated:
-    appended → `minimumReleaseAge: 1 day`; prepended → the generic pypi cooldown rule overrides it
-    straight back to **3 days**, i.e. the change appears to be made and does nothing. Same class as
-    §13's "insert into sorted position rather than append", pointing the other way.
-  - **`matchUpdateTypes: ["minor","patch"]` leaves the major path intact** — simulated, a major still
-    lands on `automerge: false` + `dependencyDashboardApproval`. Confirm Renovate classifies a
-    **0.16 → 0.17** bump as `minor` under `pep440`, since that is the exact case this exists for.
-- **Watch for:** `minimumReleaseAge` bounds when a release becomes *eligible*, not when Renovate
-  *runs*. The repo extends `schedule:weekly` at top level, so a 24h cooldown alone still waits for
-  the weekly window — the rule almost certainly needs `schedule: ["at any time"]` too. Confirm what
-  `schedule:weekly` expands to rather than trusting this line.
-- **Failing-test-first:** set `.ruff-version` to a version *older* than the floor resolves (e.g.
-  `0.15.0`), render a leg, and show the hook and the leg formatting the same file differently —
-  then show the rule that would have closed that gap within a day.
-- **File set:** `renovate.json`, `docs/SECURITY-BASELINE.md` (the §13 row's residual clause becomes
-  *bounded* rather than open).
-- **Blocked-by:** none — FMT-1 shipped the single pin this builds on. **Blocks:** none. **AFK** —
-  the noise/earliness trade is pre-made above. **Sized:** yes.
+*`FMT-2` exits with its own PR, and **its failing-test-first entry did not fail as written.** Pinned
+at the ticket's own example (`0.15.0`) against a leg that resolved `0.16.0` — a full minor of lag —
+the hook's output was **accepted** by the leg. Measured three ways before that was believed: the
+leg's 47 Python files, a deliberately 0.4.10-mangled variant of them, and a probe of the constructs a
+style change would move (docstring-code-format fences, doctests, wrapped asserts, `match`, multi-`with`,
+comprehensions, lambda) are **byte-identical** under 0.15.0 and 0.16.0. There was no Python style
+change in that window, so the pin can lag a whole minor and the hook still agrees with the gate.
+**The gap is real anyway, and reproduces one file type over at a ONE-release lag** — 0.16's breaking
+change is that `ruff format` discovers markdown. Pinned at `0.15.22`, the pin's consumers checked
+**35** files and reported green; the leg's own `uv run ruff format --check .` checked **43** and
+rejected the jobs README's ` ```python ` block over a one-space drift. That is not a hypothetical:
+it is the incident that red-lit three capability legs in June, reproduced deliberately. **Both
+flagged claims were confirmed against Renovate's own modules, and one changed the fix.** `pep440`
+classifies `0.16→0.17` as `minor` (and `0.16→1.0.0` as `major`, so the major path keeps dashboard
+approval); `schedule:weekly` resolves through `schedule:earlyMondays` to `* 0-3 * * 1`, which **does**
+defeat a bare 24h cooldown — `minimumReleaseAge` bounds when a release becomes *eligible*, never when
+Renovate *runs* — so `schedule: ["at any time"]` is load-bearing, not a precaution. Appending was
+confirmed too, with a detail the dry-run had not: prepended, the generic pypi rule overrides
+`minimumReleaseAge` back to 3 days **while the schedule survives**, so the wrong order is
+*half*-working rather than plainly broken. **The rule is scoped by file, not by depName** — the
+`ruff>=0.15` floor in `template/pyproject.toml.jinja` reports the same depName and **ships into every
+generated service**, so it keeps the full 3-day supply-chain cooldown; only this repo's own dev pin is
+accelerated. Landed as **`chore:`** rather than FMT-1's `fix:` deliberately: nothing under `template/`
+changed, so a version bump would tell every downstream service to `copier update` for a byte-identical
+render. **RENOVATE-1** files what building it surfaced.*
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 
@@ -280,6 +261,38 @@ than improvised here.*
   (`down_revision`).
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
 - *Lowest priority in NEXT UP: nothing is unsafe today, and no shipped service is affected.*
+
+### RENOVATE-1 · `renovate.json` is load-bearing config with no gate behind it
+
+- **Deliverable:** a `renovate.json` that does not validate cannot be merged.
+- **Evidence:** this is the third consecutive ticket about a config that looked applied and was not.
+  FMT-1 found a `# renovate:` marker matching no manager; FMT-2 then made a `packageRule` the
+  **entire** mechanism bounding the ruff-pin lag. Nothing checks either.
+  `grep -rn renovate .github/workflows/*.yml .pre-commit-config.yaml` returns five hits, all
+  `# renovate:` *comments* in `ci.yml`. §0's doctrine is the argument: a config with no gate behind
+  it is prose, and this one is now holding up a §13 row.
+- **Sketch:** `renovate-config-validator` as a CI step in `ci-ok`'s `needs`, and/or a pre-commit hook.
+  Measured during FMT-2, so the cheap half is known to work: run from the repo root it reports
+  `Validating renovate.json / Config validated successfully`, and on a misspelled option
+  (`matchFileName` for `matchFileNames`) it prints `Invalid configuration option:
+  packageRules[4].matchFileName` and **exits 1**.
+- **The open question, which is why this is HITL.** Validation proves the config *parses*; it does
+  not prove a rule *matches*, and matching is the class this repo keeps meeting. Measured: change
+  FMT-2's glob to `["ruff-version"]` — no leading dot, a valid key with a valid value — and the
+  validator is **green while the rule matches nothing**, resolving the ruff bump straight back to the
+  generic 3-day cooldown and the weekly schedule. FMT-2 caught that by driving Renovate's own
+  `applyPackageRules` over the real config in node, which is a genuine test *and* a dependency on
+  internal module paths that are not a public API and can move on any Renovate release. Whether that
+  assertion belongs in CI, or whether validation alone is the honest ceiling with the matching claim
+  left to the reviewer, is the decision this ticket exists to make — **it is not pre-made.**
+- **Failing-test-first:** the two measurements above, in order — the misspelled key (validator
+  catches it) then the wrong glob (validator green, rule dead) — so the gate's ceiling is established
+  before its shape is chosen.
+- **File set:** `.github/workflows/ci.yml`, possibly `.pre-commit-config.yaml`,
+  `docs/SECURITY-BASELINE.md` §13.
+- **Blocked-by:** none. **Blocks:** none. **HITL** — the scope decision above. **Sized:** yes.
+- *Also a standing **GC Friday** candidate: three corrections in one lineage is exactly the trigger
+  for converting a repeated mistake into a gate rather than a reminder.*
 
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
