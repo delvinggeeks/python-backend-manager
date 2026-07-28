@@ -49,6 +49,12 @@ this repo's own tooling: every service this template has generated tells its rep
 vulnerability disclosures to the template author. A live misrouting of security reports outranks
 prevention work, and RENOVATE-1 — the newest ticket, filed by FMT-2 — is prevention.*
 
+*Two flags a session should not have to open four tickets to find. **The head of the queue is the
+only **HITL** one:** ENV-2 needs a human answer on what a generated service's disclosure address
+should default to, so it stops rather than picking one. The other three are **AFK** — RESET-1 and
+MIG-SPLIT-1 as filed, and RENOVATE-1 since its scope trade was pre-made (ship the validator, do not
+build the rule-matching assertion, state the ceiling instead).*
+
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
 [SECURITY-BASELINE.md](SECURITY-BASELINE.md) §13. Each exit was confirmed against that ticket's own
@@ -271,26 +277,39 @@ render. **RENOVATE-1** files what building it surfaced.*
   `grep -rn renovate .github/workflows/*.yml .pre-commit-config.yaml` returns five hits, all
   `# renovate:` *comments* in `ci.yml`. §0's doctrine is the argument: a config with no gate behind
   it is prose, and this one is now holding up a §13 row.
-- **Sketch:** `renovate-config-validator` as a CI step in `ci-ok`'s `needs`, and/or a pre-commit hook.
-  Measured during FMT-2, so the cheap half is known to work: run from the repo root it reports
-  `Validating renovate.json / Config validated successfully`, and on a misspelled option
-  (`matchFileName` for `matchFileNames`) it prints `Invalid configuration option:
-  packageRules[4].matchFileName` and **exits 1**.
-- **The open question, which is why this is HITL.** Validation proves the config *parses*; it does
-  not prove a rule *matches*, and matching is the class this repo keeps meeting. Measured: change
-  FMT-2's glob to `["ruff-version"]` — no leading dot, a valid key with a valid value — and the
-  validator is **green while the rule matches nothing**, resolving the ruff bump straight back to the
-  generic 3-day cooldown and the weekly schedule. FMT-2 caught that by driving Renovate's own
-  `applyPackageRules` over the real config in node, which is a genuine test *and* a dependency on
-  internal module paths that are not a public API and can move on any Renovate release. Whether that
-  assertion belongs in CI, or whether validation alone is the honest ceiling with the matching claim
-  left to the reviewer, is the decision this ticket exists to make — **it is not pre-made.**
-- **Failing-test-first:** the two measurements above, in order — the misspelled key (validator
-  catches it) then the wrong glob (validator green, rule dead) — so the gate's ceiling is established
-  before its shape is chosen.
-- **File set:** `.github/workflows/ci.yml`, possibly `.pre-commit-config.yaml`,
-  `docs/SECURITY-BASELINE.md` §13.
-- **Blocked-by:** none. **Blocks:** none. **HITL** — the scope decision above. **Sized:** yes.
+- **Decision — pre-made, which is what makes this AFK.** Ship `renovate-config-validator` as a CI
+  step in **`ci-ok`'s `needs`**, plus a pre-commit hook as a local convenience **labelled bypassable**
+  — the same two-position shape, and the same honesty about it, as the secret-scanning row in §13:
+  the hook is a fast local catch that `--no-verify` defeats, and the CI job is the actual control.
+- **Do NOT build the rule-matching assertion.** FMT-2 proved its own rule by driving Renovate's
+  `applyPackageRules` over the real config in node, and that is the right thing to do *in a session*.
+  It is the wrong thing to put in CI: `renovate/dist/util/package-rules/index.js` is an internal
+  module path, not a public API, so the gate would break on upstream releases having caught nothing —
+  trading a real failure class for a gate that goes red for reasons unrelated to this repo. **A gate
+  people disable is worse than a documented ceiling.** That constraint is not the builder's to
+  revisit; the *shape* of the CI step is.
+- **State the ceiling instead, in two places.** (a) On the §13 row: validation proves the config
+  **parses**, never that a rule **matches**. (b) In §13's *gate conventions* preamble: record that a
+  `packageRule` **is a gate** — which puts it under the convention already there ("a gate is trusted
+  only after it has caught a failure nobody planted"), so a new or changed rule must be **demonstrated
+  matching via an `applyPackageRules` dry-run in its own session**, exactly as FMT-2 did. The
+  convention does the work the CI assertion would have, at the position where it is actually cheap.
+- **Failing-test-first — two measurements, in this order, so the ceiling is established before the
+  gate ships.** (1) Misspell an option (`matchFileName` for `matchFileNames`): the validator prints
+  `Invalid configuration option: packageRules[4].matchFileName` and **exits 1** — the class the gate
+  catches. (2) Then change FMT-2's glob to `["ruff-version"]`, no leading dot — a valid key with a
+  valid value: the validator is **green while the rule matches nothing**, and the ruff bump resolves
+  straight back to the generic 3-day cooldown and the weekly schedule. Both were measured during
+  FMT-2; re-run them rather than quoting them.
+- **Two things already confirmed, so they are not rediscovered.** `npx --yes --package renovate
+  renovate-config-validator` run from the repo root reports `Validating renovate.json / Config
+  validated successfully` and is what the CI step should invoke. And the upstream pre-commit hook
+  (`renovatebot/pre-commit-hooks`, id `renovate-config-validator`) has
+  `files: (^|/).?renovate(?:rc)?(?:\.json5?)?$`, which **does** match this repo's `renovate.json` —
+  verified against the pattern, not assumed. It is `language: node`, so pin it like every other hook.
+- **File set:** `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `docs/SECURITY-BASELINE.md`
+  (§13 gate-conventions preamble + the ruff-pin row's ceiling clause).
+- **Blocked-by:** none. **Blocks:** none. **AFK** — the scope trade is pre-made above. **Sized:** yes.
 - *Also a standing **GC Friday** candidate: three corrections in one lineage is exactly the trigger
   for converting a repeated mistake into a gate rather than a reminder.*
 
