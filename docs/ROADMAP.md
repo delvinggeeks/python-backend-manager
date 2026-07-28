@@ -40,9 +40,14 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-The active queue, **in priority order: ENV-2 → RESET-1 → FMT-2 → MIG-SPLIT-1.** Ticket order in
+The active queue, **in priority order: FMT-2 → ENV-2 → RESET-1 → MIG-SPLIT-1.** Ticket order in
 this section is the queue; a session pulls the top one. Everything below the tickets is coarse and
 carries `decompose on pull`.
+
+*FMT-2 leads for the reason FMT-1 did, one layer down: FMT-1's headline finding was a `# renovate:`
+marker that matched nothing — **a config with no gate behind it is prose**, the same doctrine §0
+applies to controls, applied to the automation that maintains them. FMT-2 is the other half of that
+finding, and it is small.*
 
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
@@ -143,6 +148,51 @@ floats by design** — a capability leg resolves ruff from a fresh `uv lock` aga
 detail, and closing it is a trade-off the ticket had not pre-decided; it is filed as **FMT-2** rather
 than improvised here.*
 
+### FMT-2 · Bound the ruff-pin lag with a cooldown, instead of gating on it
+
+- **Deliverable:** `.ruff-version` chases the floating floor within about a day, and the residual lag
+  is *accepted on the record* rather than policed by a gate.
+- **Evidence:** FMT-1 gave this repo one recorded ruff version (`.ruff-version`, read by the hook,
+  `repo-lint` and `micro-render-check.py`) — but the gate that *rejected* the file in FMT-1's own
+  reproduction was none of those. It was the capability leg, and a leg resolves ruff from a fresh
+  `uv lock` against the template's `ruff>=0.15` **floor**, so it takes whatever is newest at run
+  time. Today both are 0.16.0. On the next formatter-affecting release they are not, and FMT-1's
+  defect returns — one minor apart instead of twelve.
+- **The legs must keep floating — do not "fix" this by pinning them.** A leg floating to the newest
+  ruff is how this repo learns that a new ruff broke the template; that is the signal that caught
+  0.16's markdown formatting. Any solution that pins the leg's ruff destroys the gate to protect the
+  hook.
+- **Decision — pre-made, which is what makes this AFK.** **Accept the lag, and shorten it.** No
+  pin-equals-resolved CI check: on a stale pin it would red *every* PR for close to a week (weekly
+  Renovate schedule × 3-day pypi cooldown), and **noise that trains people to ignore red costs more
+  than a bounded lag that announces itself**. The §13 row already states the residual, so the honest
+  record exists. What lands instead is a **ruff-specific `packageRule`** — short cooldown (~24h),
+  automerge on **patch/minor only** — so the pin chases the floor within a day. That constraint is
+  not the builder's to revisit; the *shape* of the rule is.
+- **Verify the rule MATCHES; do not assume it does.** This is the ticket that found a `# renovate:`
+  marker matching nothing, so the same standard applies to its own fix: extract the dep from
+  `.ruff-version` with the customManager's own regex, then confirm the new rule selects
+  `{depName: ruff, datasource: pypi}` and wins. Dry-run already done, with two results worth having
+  before you start:
+  - **Append it — prepending is a silent no-op.** Rules merge in order, later wins. Simulated:
+    appended → `minimumReleaseAge: 1 day`; prepended → the generic pypi cooldown rule overrides it
+    straight back to **3 days**, i.e. the change appears to be made and does nothing. Same class as
+    §13's "insert into sorted position rather than append", pointing the other way.
+  - **`matchUpdateTypes: ["minor","patch"]` leaves the major path intact** — simulated, a major still
+    lands on `automerge: false` + `dependencyDashboardApproval`. Confirm Renovate classifies a
+    **0.16 → 0.17** bump as `minor` under `pep440`, since that is the exact case this exists for.
+- **Watch for:** `minimumReleaseAge` bounds when a release becomes *eligible*, not when Renovate
+  *runs*. The repo extends `schedule:weekly` at top level, so a 24h cooldown alone still waits for
+  the weekly window — the rule almost certainly needs `schedule: ["at any time"]` too. Confirm what
+  `schedule:weekly` expands to rather than trusting this line.
+- **Failing-test-first:** set `.ruff-version` to a version *older* than the floor resolves (e.g.
+  `0.15.0`), render a leg, and show the hook and the leg formatting the same file differently —
+  then show the rule that would have closed that gap within a day.
+- **File set:** `renovate.json`, `docs/SECURITY-BASELINE.md` (the §13 row's residual clause becomes
+  *bounded* rather than open).
+- **Blocked-by:** none — FMT-1 shipped the single pin this builds on. **Blocks:** none. **AFK** —
+  the noise/earliness trade is pre-made above. **Sized:** yes.
+
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 
 - **Deliverable:** a generated service's disclosure address is the *service owner's*, not the
@@ -203,40 +253,6 @@ than improvised here.*
 - **File set:** `template/src/app/…db/session.py.jinja`, `template/tests/{% if include_rls %}test_rls.py{% endif %}`,
   `docs/SECURITY-BASELINE.md` (§3 line, §13 preamble bullet + row).
 - **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
-
-### FMT-2 · The recorded ruff pin can silently fall behind the ruff the legs actually run
-
-- **Deliverable:** the version the format hook writes with and the version the capability legs judge
-  with cannot diverge without something saying so.
-- **Evidence:** FMT-1 gave this repo one recorded ruff version (`.ruff-version`, read by the hook,
-  `repo-lint` and `micro-render-check.py`) — but the gate that *rejected* the file in FMT-1's own
-  reproduction was none of those. It was the capability leg, and a leg resolves ruff from a fresh
-  `uv lock` against the template's `ruff>=0.15` **floor**, so it takes whatever is newest at run
-  time. Today both are 0.16.0. On the next formatter-affecting release they are not, and FMT-1's
-  defect returns — one minor apart instead of twelve, and still silent.
-- **Why it is smaller than FMT-1, and why it is still real:** the lag self-announces (a leg goes red)
-  rather than corrupting diffs indefinitely, and the gap is bounded by one release. But the thing
-  that goes red is a *capability leg on an unrelated PR*, which is exactly the misattributed failure
-  FMT-1 existed to stop.
-- **The legs must keep floating — do not "fix" this by pinning them.** A leg floating to the newest
-  ruff is how this repo learns that a new ruff broke the template; that is the signal that caught
-  0.16's markdown formatting. Any solution that pins the leg's ruff destroys the gate to protect the
-  hook.
-- **Design decision required (do not pre-empt):** (a) a CI check asserting `.ruff-version` equals
-  the version a rendered project resolves — earliest signal, but Renovate runs **weekly** with a
-  3-day pypi cooldown, so a stale pin could red *every* PR for close to a week; (b) the same check
-  with a ruff-specific `packageRule` shortening that window; (c) accept the lag and leave the leg's
-  own red as the signal, documenting it on the §13 row. The trade is CI noise against earliness and
-  it was not pre-decided in FMT-1.
-- **Failing-test-first:** set `.ruff-version` to a version *older* than the floor resolves (e.g.
-  `0.15.0`), render a leg, and show the hook and the leg formatting the same file differently with
-  nothing reporting it.
-- **File set:** `.ruff-version` consumers as chosen (`.github/workflows/ci.yml`), possibly
-  `renovate.json`, `docs/SECURITY-BASELINE.md` (§13 row's stated residual).
-- **Blocked-by:** none — FMT-1 shipped the single pin this builds on. **Blocks:** none. **HITL** —
-  the noise/earliness trade is a judgement call. **Sized:** yes.
-- *Placed ahead of MIG-SPLIT-1 for the reason FMT-1 was placed first: a defect in the tool that
-  produces every diff outranks one that no shipped service is exposed to.*
 
 ### MIG-SPLIT-1 · `0012_wallet_org` is one revision doing three deployable steps
 
