@@ -7,13 +7,13 @@ it). It applies the *same* policy DDL the ``0008_rls`` migration applies, then s
 cross-tenant write is rejected, and that the policy drops cleanly (round-trip). Skipped when
 Docker / testcontainers isn't available (e.g. the default SQLite-only test runs).
 
-EDITING THIS FILE — three traps, each of which has already cost a debugging cycle:
+EDITING THIS FILE — four traps, each of which has already cost a debugging cycle:
 
 1. **This file's CONTENT is not rendered.** Its *path* is gated
    (``{% if include_rls %}test_rls.py{% endif %}``) but it has no ``.jinja`` suffix, so copier
    copies it verbatim. A jinja tag written in this body lands literally and the file fails to
    parse. Vary behaviour per capability at RUNTIME instead — see ``_tenant_tables_from_metadata``,
-   which imports optional model modules under ``contextlib.suppress(ImportError)``.
+   which imports each optional model module and skips only the ones this render omits.
 2. **``importlib.util.find_spec`` RAISES ``ModuleNotFoundError``** when a *parent* package is
    absent, rather than returning ``None``. Any presence check for an optional module needs the
    guard, or a render without that capability errors instead of reporting "not present".
@@ -21,6 +21,10 @@ EDITING THIS FILE — three traps, each of which has already cost a debugging cy
    until the model modules are loaded for their registration side effect — the same reason
    ``migrations/env.py`` imports them all. Enumerating tables without importing first silently
    finds nothing, which looks like "no tenant tables" rather than "broken enumeration".
+4. **An absent capability and a broken environment are BOTH ``ImportError``**, and guarding the
+   pair alike makes this gate fail OPEN — the enumeration shrinks instead of erroring, and a
+   smaller denominator is invisible in a pass. ``_absent_capability`` is what separates them;
+   read it before widening any import guard in this file.
 """
 
 from __future__ import annotations
@@ -506,18 +510,39 @@ RLS_EXEMPT_TABLES: dict[str, str] = {
 }
 
 
+def _absent_capability(module: str, exc: ImportError) -> bool:
+    """Did `exc` mean "this render omits that module", rather than "the environment is broken"?
+
+    The two arrive as the same exception type, and treating them alike is a fail-open: a model
+    module that fails to import because its *dependency* is missing drops out of the enumeration
+    exactly like one that was never rendered, and the coverage gate then passes over fewer tables
+    than the service has.
+
+    Only the module's own absence counts. ``import_module("app.billing.models")`` on a render
+    without billing raises ``ModuleNotFoundError(name="app.billing")`` — the missing name is the
+    module itself, or a package on its path. Everything else is an environment fault: a missing
+    third-party package (a venv synced without the extra that provides it), a bare ``ImportError``
+    carrying no ``name``, or some *other* ``app.`` module gone — which means this module WAS
+    rendered and something it imports is genuinely broken.
+    """
+    missing = exc.name or ""
+    return bool(missing) and (module == missing or module.startswith(f"{missing}."))
+
+
 def _tenant_tables_from_metadata() -> set[str]:
     """Every table carrying `organization_id`, from SQLAlchemy metadata.
 
     Model modules are imported for their side effect of registering tables on the shared
-    ``Base.metadata`` — the same reason ``migrations/env.py`` imports them. Absent modules are
-    skipped, so this works in every capability combination without jinja: THIS FILE'S PATH is
-    gated, but its content is copied verbatim, so a jinja tag here would land literally.
+    ``Base.metadata`` — the same reason ``migrations/env.py`` imports them. Modules this render
+    omits are skipped, so this works in every capability combination without jinja: THIS FILE'S
+    PATH is gated, but its content is copied verbatim, so a jinja tag here would land literally.
 
     Metadata is the right source of truth: a new model with an `organization_id` column is covered
     the moment it exists, with nobody having to remember to add it to a list.
+
+    Any OTHER import failure raises. This gate proves tenant isolation, so its failure mode has to
+    be a loud error rather than a quietly smaller scope.
     """
-    import contextlib
     import importlib
 
     from app.db.models import Base
@@ -530,10 +555,61 @@ def _tenant_tables_from_metadata() -> set[str]:
         "app.tenancy.models",
         "app.webhooks.models",
     ):
-        with contextlib.suppress(ImportError):
+        try:
             importlib.import_module(module)
+        except ImportError as exc:
+            if _absent_capability(module, exc):
+                continue
+            raise RuntimeError(
+                f"{module} failed to import, and not because this render omits it "
+                f"({type(exc).__name__}: {exc}). Refusing to continue is deliberate: skipping it "
+                "shrinks the set of tables this RLS coverage gate checks, so the gate would "
+                "report green while verifying less than it claims. A missing third-party module "
+                "usually means `uv sync` ran without the extra that provides it."
+            ) from exc
 
     return {name for name, table in Base.metadata.tables.items() if "organization_id" in table.c}
+
+
+def test_a_missing_dependency_is_never_mistaken_for_an_absent_capability() -> None:
+    """The coverage gate may shrink for exactly one reason: the capability was not rendered.
+
+    Tested against the classifier directly rather than by breaking a venv, because the
+    distinction IS the guardrail. Observed while syncing a metering render without
+    `--extra users`: every model module raised `ModuleNotFoundError: fastapi_users`, all were
+    suppressed, and the enumeration returned an empty set — caught only because the wipe was
+    TOTAL. Measured on that same render, one module failing instead of six leaves 1 of 5 tenant
+    tables checked (`memberships`), the four money tables silently unverified, and passing.
+    """
+    # Absent capability — the missing name is the module itself, or a package on its path.
+    assert _absent_capability("app.billing.models", ModuleNotFoundError(name="app.billing"))
+    assert _absent_capability("app.billing.models", ModuleNotFoundError(name="app.billing.models"))
+
+    # Broken environment — everything else. The third-party case is the one actually observed.
+    assert not _absent_capability("app.metering.models", ModuleNotFoundError(name="fastapi_users"))
+    # A bare ImportError carries no `name` (`from x import Y` where Y is gone), so it is never
+    # evidence that the capability is absent.
+    assert not _absent_capability("app.metering.models", ImportError("cannot import name 'GUID'"))
+    # A DIFFERENT app module: this one rendered, so something it imports is genuinely broken.
+    assert not _absent_capability(
+        "app.metering.models", ModuleNotFoundError(name="app.tenancy.models")
+    )
+    # A shared prefix is not a package path — `app.billing` is not a parent of `app.billing_x`.
+    assert not _absent_capability("app.billing_x.models", ModuleNotFoundError(name="app.billing"))
+
+
+def test_the_enumeration_raises_rather_than_shrinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The classifier is wired to a raise — not to a second, better-informed suppression."""
+    import importlib
+
+    def _dependency_gone(name: str) -> None:
+        raise ModuleNotFoundError(
+            f"No module named 'fastapi_users' (importing {name})", name="fastapi_users"
+        )
+
+    monkeypatch.setattr(importlib, "import_module", _dependency_gone)
+    with pytest.raises(RuntimeError, match="shrinks the set of tables"):
+        _tenant_tables_from_metadata()
 
 
 async def test_every_tenant_table_is_rls_protected(postgres_dsn: str) -> None:
