@@ -40,7 +40,13 @@ that rule enforceable rather than aspirational.
 
 ## NEXT UP — decomposed
 
-The active queue. Everything below is coarse and carries `decompose on pull`.
+The active queue, **in priority order: FMT-1 → ENV-2 → RESET-1 → MIG-SPLIT-1.** Ticket order in
+this section is the queue; a session pulls the top one. Everything below the tickets is coarse and
+carries `decompose on pull`.
+
+*FMT-1 was moved ahead of ENV-2 deliberately: a hook that silently rewrites regions a session never
+touched corrupts **every diff a reviewer reads**, which outranks sending disclosure mail to the
+wrong address. A defect in the tool that produces changes precedes a defect in one change.*
 
 *Shipped tickets have exited per the landed-work convention — T1 (#72), T2 (#73), T3 (#74) and P4-a
 (#75); their evidence is in [CHANGELOG.md](../CHANGELOG.md) and
@@ -141,14 +147,21 @@ branch. **FMT-1** files what validating it surfaced.*
   contains changes nobody chose. It is silent: nothing reports that the file was touched.
 - **The pin already exists** — `ci.yml`'s `repo-lint` job carries a Renovate-tracked
   `RUFF_VERSION=0.16.0`, the same version the generated projects lock. The hook just doesn't use it.
-- **Failing-test-first:** edit any line of a file containing a 0.16-formatted `assert x, (…)`;
-  observe the hook rewrite the untouched assert, then a rendered leg reject it.
-- **Sketch (do not pre-empt):** `uvx "ruff@${RUFF_VERSION}" format` in the hook versus a repo-level
-  dev dependency so `uv run ruff` resolves to something pinned. Either way the version must have
-  **one** home, or this recurs at the next ruff minor. GC-Friday material: the correction is a
-  version pin, never a reminder to check the hook's output.
+- **Decision — pre-made, which is what makes this AFK.** The hook consumes the **same pin CI uses**:
+  exactly **one place records the ruff version, and both the hook and CI read it**. That constraint
+  is not the builder's to revisit. The *mechanism* is: `uvx "ruff@${RUFF_VERSION}"` in the hook,
+  reading the pin from its single recorded location, **or** a repo-level dev dependency so
+  `uv run ruff` resolves to something pinned — take whichever is the cleaner single home once you
+  see the files. What is ruled out is the hook resolving whatever ruff is on `PATH`.
+- **Failing-test-first:** edit a line in a file containing a 0.16-formatted `assert x, (…)`; show
+  the hook rewriting the **untouched** assert, then a rendered leg rejecting it. (`test_rls.py` has
+  one such assert at `test_rls_exemptions_are_not_stale`; GATE-1's PR #87 is the worked example.)
 - **File set:** `.claude/hooks/ruff-format.sh`, and wherever the single pin ends up recorded.
-- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
+- **Blocked-by:** none. **Blocks:** none. **AFK** — the judgement call is pre-made above.
+  **Sized:** yes.
+- **Watch for:** the fix cannot be verified through an `Edit`, because the hook fires on the
+  verification edit too. Drive it the way GATE-1 did — the hook's own PostToolUse JSON piped to the
+  script, or a `Bash`-side re-format — or the measurement measures the thing it is testing.
 
 ### ENV-2 · `template/SECURITY.md` sends every service's vulnerability reports to one company
 
