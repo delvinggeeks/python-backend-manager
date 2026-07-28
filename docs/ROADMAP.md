@@ -155,6 +155,68 @@ never silent.*
   **Sized:** yes.
 - *Re-filed: the ENV-1 exit deleted this block along with ENV-1's, which sat immediately above it.*
 
+### RESET-1 · Pool-boundary GUC reset, as a declared backstop
+
+- **Deliverable:** a connection returned to the pool carries no `app.*` GUC, whatever set it — and
+  §13 gains a row *type* that says so without claiming a failure it has not caught.
+- **Evidence — and its limit, stated up front:** there is **no recorded failure**. F1 (#64) made the
+  tenant GUC transaction-local (`set_config(..., true)`), and §3 already documents why: under a
+  transaction-mode pooler a session-scoped value is *actively dangerous*, because the connection
+  carries it to the next tenant's transaction. The shipped design cannot produce that value — the
+  only writer is the `after_begin` listener, and it always writes locally. This ticket guards the
+  class anyway, at the boundary where the leak would occur: the analog of PgBouncer's
+  `server_reset_query`, one layer below the code that is currently correct.
+- **Why it is filed despite no failure:** the hazard is a *future* session-scoped `SET`, added by
+  app code or a library, which the current design has no mechanism to prevent — only a convention
+  against. A backstop at the pool boundary makes the convention unnecessary for safety.
+- **The row type is the real deliverable.** §13's opening sentence currently admits a guardrail only
+  when "a test or gate demonstrates the failure it prevents". This row cannot meet that and must not
+  pretend to. Add to the **Gate conventions** preamble a fourth bullet defining two row kinds:
+  *demonstrated-failure* rows (evidence is a path to the failure caught) and *declared-backstop*
+  rows (guards a class the current code cannot produce; no demonstrated failure; **upgrades** to
+  evidence-carrying the first time it fires). **The second must never masquerade as the first** —
+  that is the whole point of naming them, since an undifferentiated table lets a rationale row
+  inherit the credibility of an evidence row.
+- **Failing-test-first:** the synthetic test *is* the entry point, and it is synthetic by
+  construction — deliberately issue a session-scoped `set_config('app.current_tenant', ..., false)`,
+  return the connection, and assert the next checkout sees it still set. That assertion passes today;
+  it is the failure the backstop then removes.
+- **Sketch:** a `checkin` pool-event listener issuing `RESET` for the `app.*` GUCs; the synthetic
+  test above; the §13 row under the new type; the preamble bullet; and **one line in §3**, beside the
+  existing transaction-scoping paragraph — *transaction-scope is the design; checkin-reset is the
+  backstop. The reset does not license session-scoped sets: the factory structure test still enforces
+  the source.* Without that line the backstop reads as permission.
+- **File set:** `template/src/app/…db/session.py.jinja`, `template/tests/{% if include_rls %}test_rls.py{% endif %}`,
+  `docs/SECURITY-BASELINE.md` (§3 line, §13 preamble bullet + row).
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
+
+### MIG-SPLIT-1 · `0012_wallet_org` is one revision doing three deployable steps
+
+- **Deliverable:** future renders get expand, backfill and contract as three independently
+  deployable and reversible revisions instead of one.
+- **Evidence:** `0012_wallet_org.py.jinja` performs all three inside a single `upgrade()` —
+  comment-delimited at lines 44 / 49 / 58, but one revision and one transaction. An operator
+  therefore cannot verify the backfill in production *before* the column becomes `NOT NULL`, which
+  is the entire operational reason the expand→contract shape exists. The migration's own docstring
+  already explains the three steps, so the intent is present and only the packaging is wrong.
+- **Scope boundary — read before starting:** already-generated services **keep the merged
+  revision**; there is no rewrite of applied history and no data migration. This is forward-looking
+  template hygiene for services rendered after it lands, and a service that already ran `0012` is
+  correct as it stands.
+- **Failing-test-first:** render a metering service and show `alembic history` listing one revision
+  between `0011_metering` and `0013_rls_backfill`, then assert what does not yet exist — that
+  stopping after the expand step leaves a schema the application can still run against.
+- **Sketch:** three revisions chained `0011_metering → expand → backfill → contract →
+  0013_rls_backfill`, each with a working `downgrade()`; `0013`'s `down_revision` follows the new
+  tail. Each docstring gains the operator sentence: *this chain may be applied across separate
+  production releases (expand → backfill → contract-after-verification)*. Round-trip both directions
+  under the RLS legs.
+- **File set:** `template/…/versions/{% if include_metering %}0012_wallet_org.py{% endif %}.jinja`
+  (split), the two new revision files, `template/…/versions/{% if include_rls %}0013_rls_backfill.py{% endif %}.jinja`
+  (`down_revision`).
+- **Blocked-by:** none. **Blocks:** none. **AFK.** **Sized:** yes.
+- *Lowest priority in NEXT UP: nothing is unsafe today, and no shipped service is affected.*
+
 ## Wave 4 — platform seams (value-ordered; mostly independent)
 
 ### P9 · Notifications (multi-channel)  🟠
